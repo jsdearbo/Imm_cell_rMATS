@@ -1,34 +1,40 @@
 #!/bin/bash
 
 # Define variables
-RMATS_FILE="/bobross/jdearborn/install_tools/rmats_turbo_v4_3_0/rmats.py"
-B1_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/B_Cell_tracks.txt"
-#B1_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/T_Cell_tracks.txt"
-#B1_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/Macrophage_tracks.txt"
+RMATS_FILE="/mnt/netfiles/installations/rmats_turbo_v4_3_0/rmats.py"
+B1_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt"
+# B1_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt"
+# B1_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt"
 
-#B2_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/B_Cell_tracks.txt"  # use B2 if running comparisons
-#B2_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/T_Cell_tracks.txt"
-#B2_FILE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/Macrophage_tracks.txt"
+# B2_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt"  # use B2 if running comparisons
+# B2_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt"
+B2_FILE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt"
 
-GTF_FILE="/bobross/STAR_Metadata/mm10/gencode.vM23.annotation.gtf"
-READ_LENGTH=38
-NTHREAD=16
-OUTPUT_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_only"
-#OUTPUT_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/T_only"
-#OUTPUT_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/Macrophage_only"
+GTF_FILE="/mnt/netfiles/genomes/STAR/mm10/gencode.vM23.annotation.gtf"
+READ_LENGTH=150
+NTHREAD=8
+# OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/B_only"
+# OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/T_only"
+# OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/Macrophage_only"
+# OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/B_vs_T"
+OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/B_vs_Macrophage"
+# OUTPUT_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/T_vs_Macrophage"
 
-TMP_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/tmp"
+TMP_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/rmats/tmp"
 SEQ_TYPE="paired"
 
 # Set the library path
-export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+# export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
-# Run rmats.py with the specified parameters
+# Run rmats.py with the specified parameters-- add allow-clipping and variable-read-length options
 python "$RMATS_FILE" \
     --b1 "$B1_FILE" \
     --b2 "$B2_FILE" \
     --gtf "$GTF_FILE" \
     -t "$SEQ_TYPE" \
+    --allow-clipping \
+    --variable-read-length \
     --readLength "$READ_LENGTH" \
     --nthread "$NTHREAD" \
     --od "$OUTPUT_DIR" \

@@ -6,21 +6,21 @@ set -euo pipefail
 ############################
 
 # If rmats2sashimiplot is installed as a console script, this can just be "rmats2sashimiplot"
-RMATS2SASHIMI_PY="/bobross/miniconda3/envs/rmats/bin/rmats2sashimiplot"
+RMATS2SASHIMI_PY="/mnt/netfiles/jsdearbo/miniconda3/envs/rmats/bin/rmats2sashimiplot"
 
 # rMATS output directory (contains SE.MATS.JC.txt, etc.)
-RMATS_OUT_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_vs_mac"
+RMATS_OUT_DIR="/mnt/netfiles/jsdearbo/public_data/ImmGen_Deep_RNAseq/rmats/B_vs_mac"
 
 # Plot labels
 LABEL1="B cell"
 LABEL2="Macrophage"
 
 # BAM lists used in rMATS (newline-separated)
-B1_LIST="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/B_Cell_tracks.txt"
-B2_LIST="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/txt/Macrophage_tracks.txt"
+B1_LIST="//mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_tracks.txt"
+B2_LIST="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_tracks.txt"
 
 # Output
-SASHIMI_OUT_BASE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/sashimi_B_vs_mac"
+SASHIMI_OUT_BASE="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/B_vs_mac/sashimi_B_vs_mac"
 TMPDIR="${SASHIMI_OUT_BASE}/tmp_lists"
 mkdir -p "$TMPDIR"
 
