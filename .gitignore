@@ -1,0 +1,5 @@
+# Ignore output directories
+results/
+
+# Ignore nohup outputs
+nohup.out
