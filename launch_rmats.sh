@@ -5,7 +5,10 @@ set -euo pipefail
 RMATS_FILE="/mnt/netfiles/installations/rmats_turbo_v4_3_0/rmats.py"
 GTF_FILE="/mnt/netfiles/genomes/STAR/mm10/gencode.vM23.annotation.gtf"
 SEQ_TYPE="paired"
-READ_LENGTH=150
+
+# Updated to 151 based on your "Mode" read length check.
+READ_LENGTH=151
+
 NTHREAD=8
 OUTPUT_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results"
 TMP_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/rmats/tmp"
@@ -26,21 +29,20 @@ while (( $# > 0 )); do
   esac
 done
 
-# Central registry of sample manifests so we only update paths here.
+# Central registry of sample manifests
+# NOTE: Ensure the .txt files on disk match the cleaned versions provided!
 declare -A GROUP_FILES=(
   [B]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt"
   [T]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt"
   [Macrophage]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt"
 )
 
-# Default pairings to execute when no explicit comparisons are passed.
 DEFAULT_COMPARISONS=(
   "B_vs_T"
   "B_vs_Macrophage"
   "T_vs_Macrophage"
 )
 
-# Ensure the rMATS binary can locate libgsl when we are inside a conda env.
 if [[ -n "${CONDA_PREFIX:-}" ]]; then
   LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
   export LD_LIBRARY_PATH
@@ -48,13 +50,11 @@ fi
 
 mkdir -p "${OUTPUT_ROOT}" "${TMP_ROOT}"
 
-# Emit a friendly error message and stop execution.
 die() {
   echo "Error: $*" >&2
   exit 1
 }
 
-# Normalise the group name provided in the comparison string.
 parse_group() {
   local label="$1"
   local upper="${label^}"
@@ -77,15 +77,21 @@ run_rmats() {
   local out_dir="${OUTPUT_ROOT}/${comp_label}"
   local run_tmp="${TMP_ROOT}/${comp_label}_$(date +%Y%m%d_%H%M%S)"
   local sentinel="${out_dir}/rmats_complete.flag"
-  # Respect prior completed runs unless --force is passed.
+
   if [[ -f "${sentinel}" && ${FORCE} -eq 0 ]]; then
     echo "=== Skipping ${comp_label} (sentinel present) ==="
     return
   fi
-  mkdir -p "${out_dir}" "${run_tmp}"
+  
+  # If forcing, clean up the old directory to avoid mixing results
   if [[ ${FORCE} -eq 1 ]]; then
+    echo "=== Cleaning old results for ${comp_label} ==="
+    rm -rf "${out_dir}"
     rm -f "${sentinel}"
   fi
+  
+  mkdir -p "${out_dir}" "${run_tmp}"
+
   echo "=== Running ${comp_label} ==="
   python "${RMATS_FILE}" \
     --b1 "${b1}" \
@@ -98,7 +104,7 @@ run_rmats() {
     --nthread "${NTHREAD}" \
     --od "${out_dir}" \
     --tmp "${run_tmp}"
-  # Flag the run as complete so future launches can skip it.
+  
   touch "${sentinel}"
   echo "=== Completed ${comp_label} ==="
 }
