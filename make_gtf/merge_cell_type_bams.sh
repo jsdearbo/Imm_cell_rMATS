@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # Paths to text files produced for rMATS input (comma- or newline-delimited BAM paths)
-B_CELL_BAM_LIST=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt
-T_CELL_BAM_LIST=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt
-MACROPHAGE_BAM_LIST=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt
+B_CELL_BAM_LIST=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt
+T_CELL_BAM_LIST=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt
+MACROPHAGE_BAM_LIST=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt
 
 # Output BAM destinations
-B_CELL_MERGED_BAM=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/merge_bams/B_Cell_merged.bam
-T_CELL_MERGED_BAM=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/merge_bams/T_Cell_merged.bam
-MACROPHAGE_MERGED_BAM=/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/merge_bams/Macrophage_merged.bam
+B_CELL_MERGED_BAM=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/merge_bams/B_Cell_merged.bam
+T_CELL_MERGED_BAM=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/merge_bams/T_Cell_merged.bam
+MACROPHAGE_MERGED_BAM=/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/merge_bams/Macrophage_merged.bam
 
 THREADS=${THREADS:-4}
 

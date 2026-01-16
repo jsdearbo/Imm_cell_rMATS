@@ -5,9 +5,9 @@ set -euo pipefail
 # USER SETTINGS
 ########################
 
-GUIDE_GTF="/bobross/STAR_Metadata/mm10/gencode.vM23.annotation.gtf"
-BAM_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/bam"
-OUTDIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/stringtie_out"
+GUIDE_GTF="/mnt/netfiles/genomes/STAR/mm10/gencode.vM23.annotation.gtf"
+BAM_DIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/merge_bams"
+OUTDIR="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out"
 THREADS=16
 
 # strandedness
