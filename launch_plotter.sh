@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-PLOTTER="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano.py"
+PLOTTER="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
 RESULT_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results"
 DEFAULT_COMPARISONS=(
   "B_vs_T"

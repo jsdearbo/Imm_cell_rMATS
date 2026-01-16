@@ -8,7 +8,7 @@ DEFAULT_COMPARISONS=(
   "B_vs_Macrophage"
   "T_vs_Macrophage"
 )
-FDR=0.05
+FDR=0.0000000005
 DPSI=0.1
 TOP=50
 OUTPUT_NAME="robust_events_summary.csv"
