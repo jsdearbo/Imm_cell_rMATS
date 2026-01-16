@@ -8,7 +8,7 @@ set -euo pipefail
 GUIDE_GTF="/bobross/STAR_Metadata/mm10/gencode.vM23.annotation.gtf"
 BAM_DIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/bam"
 OUTDIR="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/stringtie_out"
-THREADS=8
+THREADS=16
 
 # strandedness
 #STRAND_OPT="--rf"   # fr-firststrand
@@ -16,88 +16,33 @@ THREADS=8
 STRAND_OPT=""        # unstranded
 
 ########################
-# 1) PER-SAMPLE ASSEMBLY
+# 1) merged BAM per cell type, then StringTie on merged BAM
 ########################
+CELL_TYPES=(B_Cell T_Cell Macrophage)
 
 mkdir -p "${OUTDIR}"
-
-echo "[INFO] Running StringTie per sample..."
-
-# ensure unmatched globs just disappear instead of literally 'B_Cell*.bam'
 shopt -s nullglob
 
-# ONLY run on these three groups
-for BAM in "${BAM_DIR}"/B_Cell*.bam \
-           "${BAM_DIR}"/T_Cell*.bam \
-           "${BAM_DIR}"/Macrophage*.bam; do
+merge_and_stringtie() {
+  local prefix="$1"
+  local merged_bam="${OUTDIR}/${prefix}_merged.bam"
+  local out_gtf="${OUTDIR}/${prefix}_aggregate.gtf"
 
-    SAMPLE=$(basename "${BAM}" .bam)
-    echo "[INFO] Processing ${SAMPLE}"
+  echo "[INFO] Merging ${prefix} BAMs..."
+  samtools merge -@ "${THREADS}" "${merged_bam}" "${BAM_DIR}/${prefix}"*.bam
+  samtools index "${merged_bam}"
 
-    stringtie "${BAM}" \
-        -G "${GUIDE_GTF}" \
-        -o "${OUTDIR}/${SAMPLE}.gtf" \
-        -p "${THREADS}" \
-        ${STRAND_OPT} \
-        -l "${SAMPLE}"
+  echo "[INFO] Running StringTie on ${prefix} merged BAM..."
+  stringtie "${merged_bam}" \
+    -G "${GUIDE_GTF}" \
+    -o "${out_gtf}" \
+    -p "${THREADS}" \
+    ${STRAND_OPT} \
+    -l "${prefix}_agg"
+}
+
+for cell in "${CELL_TYPES[@]}"; do
+  merge_and_stringtie "${cell}"
 done
 
-########################
-# 2) CELL-TYPE–SPECIFIC MERGES
-########################
-
-echo "[INFO] Creating cell-type–specific GTF lists..."
-
-B_PREFIX="B_Cell"
-T_PREFIX="T_Cell"
-M_PREFIX="Macrophage"
-
-B_LIST="${OUTDIR}/B_Cell_gtf_list.txt"
-T_LIST="${OUTDIR}/T_Cell_gtf_list.txt"
-M_LIST="${OUTDIR}/Macrophage_gtf_list.txt"
-
-ls "${OUTDIR}"/${B_PREFIX}*.gtf  > "${B_LIST}"
-ls "${OUTDIR}"/${T_PREFIX}*.gtf  > "${T_LIST}"
-ls "${OUTDIR}"/${M_PREFIX}*.gtf  > "${M_LIST}"
-
-echo "[INFO] Merging B cell transcripts..."
-stringtie --merge \
-    -G "${GUIDE_GTF}" \
-    -o "${OUTDIR}/B_Cell_merged.gtf" \
-    "${B_LIST}"
-
-echo "[INFO] Merging T cell transcripts..."
-stringtie --merge \
-    -G "${GUIDE_GTF}" \
-    -o "${OUTDIR}/T_Cell_merged.gtf" \
-    "${T_LIST}"
-
-echo "[INFO] Merging Macrophage transcripts..."
-stringtie --merge \
-    -G "${GUIDE_GTF}" \
-    -o "${OUTDIR}/Macrophage_merged.gtf" \
-    "${M_LIST}"
-
-########################
-# 3) GLOBAL MERGE (ONLY THESE 3 TYPES)
-########################
-
-ALL_LIST="${OUTDIR}/all_gtf_list.txt"
-
-# only include B_Cell, T_Cell, Macrophage; avoid any old gd_T_Cell*.gtf etc.
-ls "${OUTDIR}"/B_Cell*.gtf \
-   "${OUTDIR}"/T_Cell*.gtf \
-   "${OUTDIR}"/Macrophage*.gtf \
-   > "${ALL_LIST}"
-
-echo "[INFO] Merging ALL samples (B/T/M only)..."
-stringtie --merge \
-    -G "${GUIDE_GTF}" \
-    -o "${OUTDIR}/ALL_3_merged.gtf" \
-    "${ALL_LIST}"
-
 echo "[INFO] Done."
-echo "[INFO] B-cell GTF:        ${OUTDIR}/B_Cell_merged.gtf"
-echo "[INFO] T-cell GTF:        ${OUTDIR}/T_Cell_merged.gtf"
-echo "[INFO] Macrophage GTF:    ${OUTDIR}/Macrophage_merged.gtf"
-echo "[INFO] Global union GTF:  ${OUTDIR}/ALL_3_merged.gtf"
