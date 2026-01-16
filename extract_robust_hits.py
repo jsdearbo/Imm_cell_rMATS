@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 
 # Default thresholds
-DEFAULT_FDR = 0.05       # Significance cutoff
+DEFAULT_FDR = 0.05      # Significance cutoff
 DEFAULT_DPSI = 0.1       # 10% splicing difference cutoff (Effect Size)
 EVENT_TYPES = ["SE", "RI", "MXE", "A3SS", "A5SS"]
 
