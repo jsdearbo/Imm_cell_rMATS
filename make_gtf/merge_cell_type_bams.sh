@@ -28,7 +28,7 @@ merge_bams() {
 
     local tmp_list
     tmp_list=$(mktemp)
-    trap 'rm -f "$tmp_list"' RETURN
+    trap 'rm -f "${tmp_list:-}"' RETURN
 
     tr ',' '\n' < "$bam_list_file" \
         | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
