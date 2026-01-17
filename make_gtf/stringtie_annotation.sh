@@ -16,21 +16,26 @@ THREADS=16
 STRAND_OPT=""        # unstranded
 
 ########################
-# 1) merged BAM per cell type, then StringTie on merged BAM
+# 1) consume merged BAM per cell type and run StringTie
 ########################
 CELL_TYPES=(B_Cell T_Cell Macrophage)
 
 mkdir -p "${OUTDIR}"
-shopt -s nullglob
 
-merge_and_stringtie() {
-  local prefix="$1"
-  local merged_bam="${OUTDIR}/${prefix}_merged.bam"
+run_stringtie() {
+  local prefix=$1
+  local merged_bam="${BAM_DIR}/${prefix}_merged.bam"
   local out_gtf="${OUTDIR}/${prefix}_aggregate.gtf"
 
-  echo "[INFO] Merging ${prefix} BAMs..."
-  samtools merge -@ "${THREADS}" "${merged_bam}" "${BAM_DIR}/${prefix}"*.bam
-  samtools index "${merged_bam}"
+  if [[ ! -f "${merged_bam}" ]]; then
+    echo "[ERROR] Expected merged BAM missing: ${merged_bam}" >&2
+    return 1
+  fi
+
+  if [[ ! -f "${merged_bam}.bai" ]]; then
+    echo "[INFO] Indexing ${merged_bam}..."
+    samtools index -@ "${THREADS}" "${merged_bam}"
+  fi
 
   echo "[INFO] Running StringTie on ${prefix} merged BAM..."
   stringtie "${merged_bam}" \
@@ -42,7 +47,7 @@ merge_and_stringtie() {
 }
 
 for cell in "${CELL_TYPES[@]}"; do
-  merge_and_stringtie "${cell}"
+  run_stringtie "${cell}"
 done
 
 echo "[INFO] Done."
