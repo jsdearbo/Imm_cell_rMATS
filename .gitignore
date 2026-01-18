@@ -5,6 +5,7 @@ data_labeling/hard_output_test/
 data_labeling/soft_output_test/
 data_labeling/validation_tracks/
 data_labeling/outputs/
+data_labeling/outputs*/
 data_labeling/__pycache__/
 
 
