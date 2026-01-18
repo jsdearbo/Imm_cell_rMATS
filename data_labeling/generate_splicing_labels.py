@@ -74,6 +74,145 @@ def _aggregate_exact_duplicates(df):
     # as_index=False returns a clean DataFrame directly
     return df.groupby(['Chromosome', 'Start', 'End', 'Strand'], observed=True, as_index=False).agg(agg_rules)
 
+def _disjoint_labels_with_priority(transcripts_df, exons_df, psi_df):
+    """
+    Build disjoint (non-overlapping) segments inside transcript space and assign p_exon
+    with priority: PSI > exon(1) > intron(0).
+
+    All inputs are pandas DataFrames with at least:
+      Chromosome, Start, End, Strand
+    psi_df additionally has: psi
+    """
+    # Normalize and keep only needed columns
+    def _prep(df, need_psi=False):
+        if df is None or df.empty:
+            cols = ['Chromosome', 'Start', 'End', 'Strand'] + (['psi'] if need_psi else [])
+            return pd.DataFrame(columns=cols)
+        df = df.copy()
+        if 'Strand' not in df.columns:
+            df['Strand'] = '.'
+        df['Start'] = df['Start'].astype(int, copy=False)
+        df['End'] = df['End'].astype(int, copy=False)
+        keep = ['Chromosome', 'Start', 'End', 'Strand'] + (['psi'] if need_psi else [])
+        return df[keep]
+
+    T = _prep(transcripts_df)
+    E = _prep(exons_df)
+    P = _prep(psi_df, need_psi=True)
+
+    if T.empty:
+        return pd.DataFrame(columns=['Chromosome', 'Start', 'End', 'p_exon'])
+
+    # Build event maps per (chrom, strand)
+    out_rows = []
+
+    # Group to keep memory bounded
+    keys = T[['Chromosome', 'Strand']].drop_duplicates().itertuples(index=False, name=None)
+    for chrom, strand in keys:
+        t = T[(T.Chromosome == chrom) & (T.Strand == strand)]
+        e = E[(E.Chromosome == chrom) & (E.Strand == strand)]
+        p = P[(P.Chromosome == chrom) & (P.Strand == strand)]
+
+        # Collect all boundaries in this chrom/strand
+        boundaries = np.concatenate([
+            t['Start'].to_numpy(), t['End'].to_numpy(),
+            e['Start'].to_numpy() if not e.empty else np.array([], dtype=int),
+            e['End'].to_numpy() if not e.empty else np.array([], dtype=int),
+            p['Start'].to_numpy() if not p.empty else np.array([], dtype=int),
+            p['End'].to_numpy() if not p.empty else np.array([], dtype=int),
+        ])
+        if boundaries.size == 0:
+            continue
+        boundaries = np.unique(boundaries)
+        boundaries.sort()
+
+        # Build add/remove events at each boundary (half-open [Start, End))
+        # We'll track active transcript count, active exon count, and active PSI sum/count.
+        t_add = {}
+        t_rem = {}
+        for s, en in zip(t['Start'].to_numpy(), t['End'].to_numpy()):
+            t_add.setdefault(s, 0); t_add[s] += 1
+            t_rem.setdefault(en, 0); t_rem[en] += 1
+
+        e_add = {}
+        e_rem = {}
+        if not e.empty:
+            for s, en in zip(e['Start'].to_numpy(), e['End'].to_numpy()):
+                e_add.setdefault(s, 0); e_add[s] += 1
+                e_rem.setdefault(en, 0); e_rem[en] += 1
+
+        # PSI needs removable identities; use row index as id
+        p_add = {}
+        p_rem = {}
+        if not p.empty:
+            p = p.reset_index(drop=True)
+            for idx, (s, en, psi) in enumerate(zip(p['Start'], p['End'], p['psi'])):
+                p_add.setdefault(s, []).append((idx, float(psi)))
+                p_rem.setdefault(en, []).append((idx, float(psi)))
+
+        active_t = 0
+        active_e = 0
+        active_p_ids = {}  # id -> psi
+        active_p_sum = 0.0
+
+        def _p_mean():
+            n = len(active_p_ids)
+            return (active_p_sum / n) if n else None
+
+        # Sweep segments
+        prev_label = None
+        prev_start = None
+
+        for i in range(len(boundaries) - 1):
+            x = int(boundaries[i])
+            y = int(boundaries[i + 1])
+            if x == y:
+                continue
+
+            # apply events at x
+            if x in t_add: active_t += t_add[x]
+            if x in t_rem: active_t -= t_rem[x]
+            if x in e_add: active_e += e_add[x]
+            if x in e_rem: active_e -= e_rem[x]
+            if x in p_add:
+                for pid, psi in p_add[x]:
+                    if pid not in active_p_ids:
+                        active_p_ids[pid] = psi
+                        active_p_sum += psi
+            if x in p_rem:
+                for pid, psi in p_rem[x]:
+                    if pid in active_p_ids:
+                        active_p_sum -= active_p_ids.pop(pid)
+
+            # outside transcript space -> skip entirely
+            if active_t <= 0:
+                # flush any pending segment
+                if prev_start is not None:
+                    out_rows.append((chrom, prev_start, x, prev_label, strand))
+                    prev_start, prev_label = None, None
+                continue
+
+            # assign label by priority
+            pm = _p_mean()
+            label = pm if pm is not None else (1.0 if active_e > 0 else 0.0)
+
+            # merge adjacent segments with same label
+            if prev_start is None:
+                prev_start = x
+                prev_label = label
+            elif label != prev_label:
+                out_rows.append((chrom, prev_start, x, prev_label, strand))
+                prev_start = x
+                prev_label = label
+
+        # flush at end
+        last_boundary = int(boundaries[-1])
+        if prev_start is not None and prev_start < last_boundary:
+            out_rows.append((chrom, prev_start, last_boundary, prev_label, strand))
+
+    out = pd.DataFrame(out_rows, columns=['Chromosome', 'Start', 'End', 'p_exon', 'Strand'])
+    return out[['Chromosome', 'Start', 'End', 'p_exon']]
+
 def _load_rmats_common(rmats_file, min_coverage):
     try:
         df = pd.read_csv(rmats_file, sep='\t')
@@ -227,37 +366,29 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     rmats_a3ss = _ensure_pr(rmats_a3ss)
     rmats_a5ss = _ensure_pr(rmats_a5ss)
 
-    # 1. Collect Variable Regions
+    # PSI regions: concat + exact-duplicate aggregation (your current behavior)
     vars_list = [gr for gr in (rmats_se, rmats_ri, rmats_a3ss, rmats_a5ss) if len(gr) > 0]
-    
     vars_pr = pr.concat(vars_list) if vars_list else pr.PyRanges()
-    
-    # If we have variables, we normalize and de-duplicate them immediately
+    psi_df = pd.DataFrame(columns=['Chromosome','Start','End','Strand','psi'])
     if len(vars_pr):
-        vars_pr = _normalize_strand(pr.PyRanges(_aggregate_exact_duplicates(vars_pr.df)))
+        vars_df = _aggregate_exact_duplicates(vars_pr.df)  # averages PSI for exact duplicates
+        psi_df = vars_df[['Chromosome','Start','End','Strand','psi']].copy()
 
-    # 2. Constitutive Exons
-    st_exons = stringtie_gr[stringtie_gr.Feature == 'exon']
-    const_exons = st_exons.subtract(vars_pr) if len(vars_pr) else st_exons
-    const_exons.psi = 1.0
-    
-    # 3. Constitutive Introns
-    st_transcripts = stringtie_gr[stringtie_gr.Feature == 'transcript']
-    if len(st_transcripts) == 0:
-        st_transcripts = st_exons.merge(by="transcript_id")
+    # Transcript and exon space from the dominant-isoform GTF
+    gdf = stringtie_gr.df
+    exons_df = gdf[gdf.Feature == 'exon'][['Chromosome','Start','End','Strand']].copy()
+    transcripts_df = gdf[gdf.Feature == 'transcript'][['Chromosome','Start','End','Strand']].copy()
+    if transcripts_df.empty:
+        # fallback: build transcript spans from exons
+        # (matches your prior behavior of merging by transcript_id, but avoids PyRanges ops here)
+        if 'transcript_id' in gdf.columns and not exons_df.empty:
+            spans = gdf[gdf.Feature == 'exon'].groupby(
+                ['Chromosome','Strand','transcript_id'], as_index=False
+            ).agg(Start=('Start','min'), End=('End','max'))
+            transcripts_df = spans[['Chromosome','Start','End','Strand']].copy()
+        else:
+            transcripts_df = exons_df.copy()
 
-    known_features = pr.concat([const_exons, vars_pr]) if len(vars_pr) else const_exons
-    const_introns = st_transcripts.subtract(known_features)
-    const_introns.psi = 0.0
-    
-    # 4. Combine
-    combined_parts = [const_exons, const_introns]
-    if len(vars_pr):
-        combined_parts.append(vars_pr)
-        
-    combined = pr.concat(combined_parts).sort()
-    
-    # Final cleanup of any duplicate boundaries
-    df_out = _aggregate_exact_duplicates(combined.df)
-    
-    return df_out[['Chromosome', 'Start', 'End', 'psi']].rename(columns={'psi': 'p_exon'})
+    # Build disjoint labeled segments with PSI priority
+    out = _disjoint_labels_with_priority(transcripts_df, exons_df, psi_df)
+    return out
