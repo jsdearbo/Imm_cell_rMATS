@@ -31,25 +31,17 @@ def parse_args():
     parser.add_argument("--min-coverage", type=int, default=DEFAULTS["min_coverage"], help="rMATS coverage cutoff")
     parser.add_argument("--psi-low", type=float, default=DEFAULTS["psi_low"], help="Low PSI threshold")
     parser.add_argument("--psi-high", type=float, default=DEFAULTS["psi_high"], help="High PSI threshold")
-    parser.add_argument("--out-bed", default=DEFAULTS["out_bed"], help="Output BED (chr start end label)")
-    parser.add_argument("--summary", default=DEFAULTS["summary"], help="Optional TSV summary of counts by label")
+    parser.add_argument("--out-bed", default=DEFAULTS["out_bed"], help="Output BED")
+    parser.add_argument("--summary", default=DEFAULTS["summary"], help="Optional TSV summary")
     return parser.parse_args()
 
 def main():
     args = parse_args()
-    print(f"[INFO] Loading SE from {args.rmats_se}")
+    print(f"[INFO] Loading data...")
     rmats_se = load_rmats_se(args.rmats_se, args.min_coverage)
-    
-    print(f"[INFO] Loading RI from {args.rmats_ri}")
     rmats_ri = load_rmats_ri(args.rmats_ri, args.min_coverage)
-
-    print(f"[INFO] Loading A3SS from {args.rmats_a3ss}")
     rmats_a3ss = load_rmats_alt_site(args.rmats_a3ss, args.min_coverage)
-
-    print(f"[INFO] Loading A5SS from {args.rmats_a5ss}")
     rmats_a5ss = load_rmats_alt_site(args.rmats_a5ss, args.min_coverage)
-    
-    print(f"[INFO] Loading GTF from {args.gtf}")
     stringtie_gr = load_stringtie_gtf(args.gtf)
 
     print("[INFO] Generating Labels...")
@@ -61,21 +53,25 @@ def main():
         rmats_a5ss,
         psi_low=args.psi_low, 
         psi_high=args.psi_high,
+        min_fragment_len=5 # Added protection against subtraction artifacts
     )
+
+    # Format as BED6: chr, start, end, name(label), score(0), strand
+    # Ensuring label is string for Name column
+    df['name'] = df['label'].astype(str)
+    df['score'] = 0
+    
+    output_cols = ['Chromosome', 'Start', 'End', 'name', 'score', 'Strand']
 
     out_path = Path(args.out_bed)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df[['Chromosome', 'Start', 'End', 'label']].to_csv(
-        out_path, sep="\t", header=False, index=False
-    )
+    
+    df[output_cols].to_csv(out_path, sep="\t", header=False, index=False)
 
     if args.summary:
         summary_path = Path(args.summary)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        # 1=Intron, 2=Exon
-        df['label'].value_counts().rename_axis("label").to_frame("count").to_csv(
-            summary_path, sep="\t"
-        )
+        df['label'].value_counts().rename_axis("label").to_frame("count").to_csv(summary_path, sep="\t")
 
     print(f"[INFO] Wrote {len(df)} regions to {out_path}")
 

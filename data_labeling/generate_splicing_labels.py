@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import pyranges as pr
 
-# --- Robust Helpers (Based on your fix) ---
+# --- Robust Helpers ---
 
 def _normalize_strand(df_like):
     """
@@ -12,17 +12,15 @@ def _normalize_strand(df_like):
     if df_like is None:
         return None
     
-    # Extract DataFrame
     if isinstance(df_like, pr.PyRanges):
         df = df_like.df.copy()
     else:
         df = df_like.copy()
         
-    # Standardize Strand
     if 'Strand' not in df.columns:
         df['Strand'] = '.'
     
-    # Force Categorical with explicit categories to align with PyRanges expectations
+    # Force Categorical
     df['Strand'] = pd.Categorical(df['Strand'].fillna('.'), categories=['+', '-', '.'])
     
     return pr.PyRanges(df)
@@ -30,19 +28,15 @@ def _normalize_strand(df_like):
 def _ensure_pr(obj):
     """
     Guarantees the input is a valid, non-empty, normalized PyRanges object.
-    Handles None, empty lists/DFs, and raw DataFrames.
     """
-    # Handle None or Empty
     if obj is None:
         return pr.PyRanges()
     if hasattr(obj, '__len__') and len(obj) == 0:
         return pr.PyRanges()
         
-    # Handle Existing PyRanges
     if isinstance(obj, pr.PyRanges):
         return _normalize_strand(obj)
         
-    # Handle DataFrame
     if isinstance(obj, pd.DataFrame):
         required = {'Chromosome', 'Start', 'End'}
         missing = required - set(obj.columns)
@@ -50,7 +44,6 @@ def _ensure_pr(obj):
             raise ValueError(f"Missing columns for PyRanges conversion: {missing}")
             
         obj = obj.copy()
-        # Ensure integer coordinates
         obj['Start'] = obj['Start'].astype(int, copy=False)
         obj['End'] = obj['End'].astype(int, copy=False)
         return _normalize_strand(obj)
@@ -59,42 +52,33 @@ def _ensure_pr(obj):
 
 def _aggregate_exact_duplicates(df):
     """
-    Resolves EXACT coordinate duplicates by averaging PSI and summing coverage.
-    Includes explicit index reset to fix the 'Length of values' pandas crash.
+    Resolves EXACT coordinate duplicates by averaging PSI.
     """
     if df.empty: return df
     
-    # CRITICAL FIX: Reset index to ensure 0..N index.
-    # PyRanges operations often leave fragmented/duplicate indices that crash groupby.
     df = df.reset_index(drop=True)
-    
     agg_rules = {'psi': 'mean', 'coverage': 'sum'}
     
-    # Use observed=True for categorical Strand efficiency
-    # as_index=False returns a clean DataFrame directly
+    # Group by strand as well to avoid merging sense/antisense
     return df.groupby(['Chromosome', 'Start', 'End', 'Strand'], observed=True, as_index=False).agg(agg_rules)
 
 def _load_rmats_common(rmats_file, min_coverage):
     try:
         df = pd.read_csv(rmats_file, sep='\t')
-    except FileNotFoundError:
-        print(f"[WARN] File not found: {rmats_file}")
-        return pd.DataFrame()
-    except pd.errors.EmptyDataError:
-        print(f"[WARN] File empty: {rmats_file}")
-        return pd.DataFrame()
-    except pd.errors.ParserError as exc:
-        print(f"[WARN] Failed to parse {rmats_file}: {exc}")
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        print(f"[WARN] File issue with: {rmats_file}")
         return pd.DataFrame()
 
     def parse_float_list(values):
         tokens = [t for t in str(values).split(',') if t not in {'', 'NA'}]
         return [float(t) for t in tokens]
 
+    # Calculate mean PSI
     df['psi'] = df['IncLevel1'].apply(
         lambda s: np.mean(vals) if (vals := parse_float_list(s)) else np.nan
     )
 
+    # Sum coverage counts
     count_cols = [c for c in df.columns if c.startswith(('IJC_SAMPLE', 'SJC_SAMPLE'))]
     def parse_int_sum(values):
         if pd.isna(values): return 0
@@ -126,6 +110,8 @@ def load_rmats_ri(rmats_file, min_coverage=20):
     df = _load_rmats_common(rmats_file, min_coverage)
     if df.empty: return pr.PyRanges()
     
+    # rMATS RI: upstreamEE (end of upstream exon) to downstreamES (start of downstream exon)
+    # This defines the INTRON that is retained.
     df['Start'] = df['upstreamEE']
     df['End'] = df['downstreamES']
     df = df.rename(columns={'chr': 'Chromosome', 'strand': 'Strand'})
@@ -139,15 +125,13 @@ def load_rmats_alt_site(rmats_file, min_coverage=20):
     df = _load_rmats_common(rmats_file, min_coverage)
     if df.empty: return pr.PyRanges()
     
-    # We must construct clean PyRanges for subtraction
     long_cols = df.rename(columns={'chr': 'Chromosome', 'longExonStart_0base': 'Start', 'longExonEnd': 'End', 'strand': 'Strand'})
     short_cols = df.rename(columns={'chr': 'Chromosome', 'shortES': 'Start', 'shortEE': 'End', 'strand': 'Strand'})
     
-    # Create temp PyRanges for the operation
     pr_long = _normalize_strand(long_cols[['Chromosome','Start','End','Strand','psi','coverage']])
     pr_short = _normalize_strand(short_cols[['Chromosome','Start','End','Strand','psi','coverage']])
     
-    # Calculate Extension
+    # Geometric subtraction to find the "extension" part
     extension = pr_long.subtract(pr_short)
     
     if len(extension) == 0:
@@ -157,12 +141,12 @@ def load_rmats_alt_site(rmats_file, min_coverage=20):
     return _normalize_strand(extension_df)
 
 def load_stringtie_gtf(gtf_file):
+    # pr.read_gtf automatically handles 1-based GTF -> 0-based Interval conversion
     return pr.read_gtf(gtf_file)
 
 # --- Generators ---
 
-def generate_hard_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None, rmats_a5ss=None, psi_low=0.2, psi_high=0.8):
-    # Ensure all inputs are robust PyRanges
+def generate_hard_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None, rmats_a5ss=None, psi_low=0.2, psi_high=0.8, min_fragment_len=5):
     stringtie_gr = _ensure_pr(stringtie_gr)
     rmats_se = _ensure_pr(rmats_se)
     rmats_ri = _ensure_pr(rmats_ri)
@@ -176,14 +160,17 @@ def generate_hard_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
         st_transcripts = st_exons.merge(by="transcript_id")
 
     # 1. Correct Exons (SE)
+    # Remove skipped exons
     false_exons = rmats_se[rmats_se.psi < psi_low]
     corrected_exons = st_exons.subtract(false_exons) if len(false_exons) else st_exons
 
+    # Add included exons (that were missing)
     missed_exons = rmats_se[rmats_se.psi > psi_high]
     if len(missed_exons):
         corrected_exons = pr.concat([corrected_exons, missed_exons]).merge()
 
     # 2. Retained Introns (RI)
+    # If high retention, add the intron region to exons (creating a long merged exon)
     if len(rmats_ri):
         ri_high = rmats_ri[rmats_ri.psi > psi_high]
         if len(ri_high):
@@ -208,7 +195,13 @@ def generate_hard_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
             ext_low = _normalize_strand(ext_low)
             corrected_exons = corrected_exons.subtract(ext_low)
 
-    # 4. Define Introns
+    # 4. Clean up artifacts (The "Swiss Cheese" fix)
+    # Subtraction can leave 1-2bp slivers. We filter those out.
+    if min_fragment_len > 0:
+        corrected_exons = corrected_exons[corrected_exons.End - corrected_exons.Start >= min_fragment_len]
+
+    # 5. Define Introns
+    # Introns are whatever is left in the transcript that isn't an exon
     introns = st_transcripts.subtract(corrected_exons)
 
     corrected_exons = _normalize_strand(corrected_exons)
@@ -220,7 +213,6 @@ def generate_hard_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     return pr.concat([corrected_exons, introns]).sort().df
 
 def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None, rmats_a5ss=None):
-    # Ensure all inputs are robust PyRanges
     stringtie_gr = _ensure_pr(stringtie_gr)
     rmats_se = _ensure_pr(rmats_se)
     rmats_ri = _ensure_pr(rmats_ri)
@@ -229,10 +221,8 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
 
     # 1. Collect Variable Regions
     vars_list = [gr for gr in (rmats_se, rmats_ri, rmats_a3ss, rmats_a5ss) if len(gr) > 0]
-    
     vars_pr = pr.concat(vars_list) if vars_list else pr.PyRanges()
     
-    # If we have variables, we normalize and de-duplicate them immediately
     if len(vars_pr):
         vars_pr = _normalize_strand(pr.PyRanges(_aggregate_exact_duplicates(vars_pr.df)))
 
@@ -257,7 +247,8 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
         
     combined = pr.concat(combined_parts).sort()
     
-    # Final cleanup of any duplicate boundaries
     df_out = _aggregate_exact_duplicates(combined.df)
     
-    return df_out[['Chromosome', 'Start', 'End', 'psi']].rename(columns={'psi': 'p_exon'})
+    # FIX: Include Strand in the output
+    cols = ['Chromosome', 'Start', 'End', 'psi', 'Strand']
+    return df_out[cols].rename(columns={'psi': 'p_exon'})

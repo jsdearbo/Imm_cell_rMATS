@@ -14,33 +14,38 @@ def main():
     args = parse_args()
     
     print("[INFO] Loading Original StringTie GTF...")
-    # Load original exons
     st_gr = load_stringtie_gtf(args.gtf)
     st_exons = st_gr[st_gr.Feature == 'exon']
-    # Keep only coords
     st_exons = st_exons[['Chromosome', 'Start', 'End', 'Strand']]
 
     print("[INFO] Loading New Hard Labels...")
-    # Load new labels (Label 2 = Exon)
-    # BED file has no header: chrom, start, end, label
-    new_df = pd.read_csv(args.hard_bed, sep='\t', names=['Chromosome', 'Start', 'End', 'label'])
-    if 'Strand' not in new_df.columns:
-        new_df['Strand'] = '.'
+    # Updated to read standard BED6 format
+    # Columns: Chromosome, Start, End, Name(label), Score, Strand
+    try:
+        new_df = pd.read_csv(
+            args.hard_bed, 
+            sep='\t', 
+            names=['Chromosome', 'Start', 'End', 'label', 'score', 'Strand']
+        )
+    except Exception as e:
+        print(f"[ERROR] Could not read BED file (expecting BED6 format): {e}")
+        return
+
+    # Filter for Exons (Label 2)
+    # Note: label comes in as 'Name' column (string), so check for "2" or "2.0" or integer 2
+    new_df['label'] = new_df['label'].astype(str)
+    new_exons = pr.PyRanges(new_df[new_df['label'].str.startswith('2')])
     
-    # Filter for Exons (Label 2) in the new dataset
-    new_exons = pr.PyRanges(new_df[new_df['label'] == 2])
-    
-    print("[INFO] Calculating Differences...")
+    print(f"[INFO] Comparing {len(st_exons)} old exons vs {len(new_exons)} new exons...")
     
     # 1. REMOVED EXONS (Red)
-    # Present in StringTie, MISSING in New Labels
+    # Note: PyRanges subtract is strand-specific by default.
     removed_exons = st_exons.subtract(new_exons)
     if len(removed_exons) > 0:
         removed_exons.itemRgb = "255,0,0" # Red
         removed_exons.Name = "Removed_FP"
     
     # 2. ADDED EXONS (Green)
-    # Present in New Labels, MISSING in StringTie
     added_exons = new_exons.subtract(st_exons)
     if len(added_exons) > 0:
         added_exons.itemRgb = "0,255,0" # Green
@@ -53,16 +58,9 @@ def main():
         print("[WARN] No differences found! The datasets are identical.")
         return
 
-    # Sort
-    diff_gr = diff_gr.sort()
-    
-    # Output simple BED for IGV
-    # BED9 Format for colors: chr, start, end, name, score, strand, thickStart, thickEnd, itemRgb
+    # Output BED9
     df_out = diff_gr.df.copy()
-    
-    # Fill BED fields
     df_out['score'] = 0
-    if 'Strand' not in df_out.columns: df_out['Strand'] = '.'
     df_out['thickStart'] = df_out['Start']
     df_out['thickEnd'] = df_out['End']
     
