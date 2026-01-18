@@ -80,6 +80,12 @@ def _load_rmats_common(rmats_file, min_coverage):
     except FileNotFoundError:
         print(f"[WARN] File not found: {rmats_file}")
         return pd.DataFrame()
+    except pd.errors.EmptyDataError:
+        print(f"[WARN] File empty: {rmats_file}")
+        return pd.DataFrame()
+    except pd.errors.ParserError as exc:
+        print(f"[WARN] Failed to parse {rmats_file}: {exc}")
+        return pd.DataFrame()
 
     def parse_float_list(values):
         tokens = [t for t in str(values).split(',') if t not in {'', 'NA'}]
