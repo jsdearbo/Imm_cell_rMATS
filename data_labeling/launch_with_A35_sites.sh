@@ -11,7 +11,7 @@ VALID_SCRIPT="${SCRIPT_DIR}/validation_tool.py"
 
 # Input Roots
 RMATS_ROOT="${PROJECT_ROOT}/results"
-STRINGTIE_ROOT="${RMATS_ROOT}/stringtie_out"
+STRINGTIE_ROOT="${RMATS_ROOT}/stringtie_out/dominant_isoforms"
 OUTPUT_ROOT="${SCRIPT_DIR}/outputs"
 HARD_OUT_DIR="${OUTPUT_ROOT}/hard"
 SOFT_OUT_DIR="${OUTPUT_ROOT}/soft"
@@ -26,9 +26,9 @@ declare -A CELL_TO_SUBDIR=(
 )
 
 declare -A GTF_PATHS=(
-  [B_Cell]="${STRINGTIE_ROOT}/B_Cell_aggregate.gtf"
-  [T_Cell]="${STRINGTIE_ROOT}/T_Cell_aggregate.gtf"
-  [Macrophage]="${STRINGTIE_ROOT}/Macrophage_aggregate.gtf"
+  [B_Cell]="${STRINGTIE_ROOT}/B_Cell_dominant.gtf"
+  [T_Cell]="${STRINGTIE_ROOT}/T_Cell_dominant.gtf"
+  [Macrophage]="${STRINGTIE_ROOT}/Macrophage_dominant.gtf"
 )
 
 declare -A EVENT_FILES=(
