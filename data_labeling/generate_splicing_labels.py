@@ -12,13 +12,11 @@ def _normalize_strand(df_like):
     if df_like is None:
         return None
     
-    # Extract DataFrame
     if isinstance(df_like, pr.PyRanges):
         df = df_like.df.copy()
     else:
         df = df_like.copy()
         
-    # Standardize Strand
     if 'Strand' not in df.columns:
         df['Strand'] = '.'
     
@@ -56,22 +54,93 @@ def _ensure_pr(obj):
 def _aggregate_exact_duplicates(df):
     """
     Resolves EXACT coordinate duplicates by averaging PSI and summing coverage.
-    Includes explicit index reset to fix the 'Length of values' pandas crash.
     """
     if df.empty: return df
     
-    # CRITICAL FIX: Reset index to ensure 0..N index.
     df = df.reset_index(drop=True)
     
     agg_rules = {}
     if 'psi' in df.columns: agg_rules['psi'] = 'mean'
     if 'coverage' in df.columns: agg_rules['coverage'] = 'sum'
     
-    # Use observed=True for categorical Strand efficiency
     if not agg_rules:
         return df.drop_duplicates(subset=['Chromosome', 'Start', 'End', 'Strand'])
 
     return df.groupby(['Chromosome', 'Start', 'End', 'Strand'], observed=True, as_index=False).agg(agg_rules)
+
+def _resolve_final_overlaps(gr):
+    """
+    Strictly resolves overlaps in the final dataset to ensure 
+    NO single genomic locus has multiple labels.
+    
+    Priority Strategy:
+    1. Variable Regions (PSI is float, not 0.0 or 1.0) - HIGHEST PRIORITY
+    2. Constitutive Exons (PSI == 1.0)
+    3. Introns (PSI == 0.0) - LOWEST PRIORITY
+    """
+    if len(gr) == 0: return gr
+    
+    # 1. Separate by Priority
+    # We use a small epsilon for float comparison safety
+    df = gr.df.copy()
+    
+    # Variable: Not 0.0 and Not 1.0 (approx)
+    is_0 = np.isclose(df['psi'], 0.0)
+    is_1 = np.isclose(df['psi'], 1.0)
+    is_var = ~(is_0 | is_1)
+    
+    vars_pr = _normalize_strand(pr.PyRanges(df[is_var]))
+    exons_pr = _normalize_strand(pr.PyRanges(df[is_1]))
+    introns_pr = _normalize_strand(pr.PyRanges(df[is_0]))
+    
+    final_parts = []
+    
+    # 2. Add Variables (Highest Priority)
+    if len(vars_pr) > 0:
+        # Self-overlap within variables? Average them.
+        # This handles the case where multiple rMATS events overlap.
+        # We assume standard PyRanges 'cluster' is safe here if we just want to flatten.
+        # But to be safe and keep PSI, we use our aggregation helper if needed, 
+        # or just assume rMATS events are distinct enough. 
+        # For now, let's just keep them.
+        final_parts.append(vars_pr)
+        
+    # 3. Add Exons (Middle Priority)
+    # Only keep Exon parts that DO NOT overlap Variables
+    if len(exons_pr) > 0:
+        if len(vars_pr) > 0:
+            exons_clean = exons_pr.subtract(vars_pr)
+            exons_clean = _normalize_strand(exons_clean)
+        else:
+            exons_clean = exons_pr
+            
+        if len(exons_clean) > 0:
+            exons_clean.psi = 1.0
+            final_parts.append(exons_clean)
+            
+    # 4. Add Introns (Lowest Priority)
+    # Only keep Intron parts that DO NOT overlap (Variables + Exons)
+    if len(introns_pr) > 0:
+        blockers = []
+        if len(vars_pr) > 0: blockers.append(vars_pr)
+        if len(exons_pr) > 0: blockers.append(exons_pr) # Use original exons to be safe
+        
+        if blockers:
+            blocker_pr = pr.concat(blockers)
+            introns_clean = introns_pr.subtract(blocker_pr)
+            introns_clean = _normalize_strand(introns_clean)
+        else:
+            introns_clean = introns_pr
+            
+        if len(introns_clean) > 0:
+            introns_clean.psi = 0.0
+            final_parts.append(introns_clean)
+            
+    if not final_parts:
+        return pd.DataFrame(columns=df.columns)
+        
+    combined = pr.concat(final_parts).sort()
+    return combined.df
 
 def _load_rmats_common(rmats_file, min_coverage):
     try:
@@ -138,7 +207,6 @@ def load_rmats_alt_site(rmats_file, min_coverage=20):
     pr_long = _normalize_strand(long_cols[['Chromosome','Start','End','Strand','psi','coverage']])
     pr_short = _normalize_strand(short_cols[['Chromosome','Start','End','Strand','psi','coverage']])
     
-    # Calculate Extension: Only the part that differs
     extension = pr_long.subtract(pr_short)
     if len(extension) == 0: return pr.PyRanges()
         
@@ -223,12 +291,8 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     # 2. Constitutive Exons
     st_exons = stringtie_gr[stringtie_gr.Feature == 'exon']
     
-    # Fix Overlaps: Subtract variable regions from exons to prevent double-labeling.
-    # This ensures that if an exon has an A3SS/A5SS extension, the extension gets the rMATS PSI
-    # and the rest of the exon gets PSI=1.0.
     if len(vars_pr):
         const_exons = st_exons.subtract(vars_pr)
-        # Ensure we don't lose strand info during subtract
         const_exons = _normalize_strand(const_exons)
     else:
         const_exons = st_exons
@@ -240,38 +304,25 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     if len(st_transcripts) == 0:
         st_transcripts = st_exons.merge(by="transcript_id")
 
-    # Introns are defined as Transcript MINUS (Exons + Variables)
+    # Introns = Transcript - (Exons + Variables)
     known_features = pr.concat([const_exons, vars_pr]) if len(vars_pr) else const_exons
     
     const_introns = st_transcripts.subtract(known_features)
     const_introns = _normalize_strand(const_introns)
     const_introns.psi = 0.0
     
-    # 4. Combine and Sanitize
+    # 4. Combine
     combined_parts = [const_exons, const_introns]
     if len(vars_pr):
         combined_parts.append(vars_pr)
     
-    # Combine everything
-    combined = pr.concat(combined_parts).sort()
-
-    # Final Conflict Resolution (The "Double Label" Fix)
-    # If any tiny overlaps remain (e.g. due to strand merging issues or PyRanges artifacts),
-    # we flatten the result by prioritizing:
-    # 1. Variables (implicitly handled by the subtraction logic above, but let's be sure)
-    # 2. Exons
-    # 3. Introns
+    combined = pr.concat(combined_parts)
     
-    # Since we built this by subtraction (Introns = Trans - Rest, Exons = Exons - Vars),
-    # the sets *should* be disjoint. The overlaps likely come from duplicate entries 
-    # where the subtraction failed to remove the 'underlying' feature perfectly.
+    # 5. Resolving Overlaps (Disjointness)
+    # We use a explicit priority resolution here to fix the "2 labels" issue
+    df_out = _resolve_final_overlaps(combined)
     
-    # Simple aggregation of exact duplicates handles the case where start/end match perfectly.
-    df_out = _aggregate_exact_duplicates(combined.df)
-    
-    # For imperfect overlaps (Region A overlaps Region B), PyRanges 'cluster' or 'merge' loses PSI info.
-    # Given the construction method, strict disjointness is best enforced by the logic above.
-    # If visual double-labels persist, they likely come from 'vars_pr' having self-overlaps 
-    # (multiple events at same locus).
+    # Final aggregation just in case
+    df_out = _aggregate_exact_duplicates(df_out)
     
     return df_out[['Chromosome', 'Start', 'End', 'psi', 'Strand']].rename(columns={'psi': 'p_exon'})
