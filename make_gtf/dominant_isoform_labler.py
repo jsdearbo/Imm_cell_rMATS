@@ -5,10 +5,10 @@ import os
 
 # Set configuration parameters
 BIN_SIZE = 32 # The fixed genomic resolution for the model
-GTF_DIR = "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/stringtie_out"
+GTF_DIR = "/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out"
 OUTPUT_DIR = f"{GTF_DIR}/multi_task_targets"
 DOMINANT_GTF_DIR = f"{GTF_DIR}/dominant_isoforms"
-REFERENCE_GTF = "/bobross/STAR_Metadata/mm10/gencode.vM23.annotation.gtf" # Used for defining the genome coordinates
+REFERENCE_GTF = "/mnt/netfiles/genomes/STAR/mm10/gencode.vM23.annotation.gtf" # Used for defining the genome coordinates
 
 # Define the list of cell types and their aggregated GTF files
 CELL_TYPES = ['B_Cell', 'T_Cell', 'Macrophage']
