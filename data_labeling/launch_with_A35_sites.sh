@@ -1,43 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq"
-TEST_DIR="${BASE}/compute_psi/hard_and_soft_label_testing"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Scripts
-HARD_SCRIPT="${TEST_DIR}/test_hard_labeling.py"
-SOFT_SCRIPT="${TEST_DIR}/test_soft_labeling.py"
-VALID_SCRIPT="${TEST_DIR}/validation_tool.py"
+HARD_SCRIPT="${SCRIPT_DIR}/test_hard_labeling.py"
+SOFT_SCRIPT="${SCRIPT_DIR}/test_soft_labeling.py"
+VALID_SCRIPT="${SCRIPT_DIR}/validation_tool.py"
 
-# Input Paths
-declare -A SE_PATHS=(
-  [B_Cell]="${BASE}/rmats/B_only/SE.MATS.JC.txt"
-  [T_Cell]="${BASE}/rmats/T_only/SE.MATS.JC.txt"
-  [Macrophage]="${BASE}/rmats/Macrophage_only/SE.MATS.JC.txt"
-)
+# Input Roots
+RMATS_ROOT="${PROJECT_ROOT}/results"
+STRINGTIE_ROOT="${RMATS_ROOT}/stringtie_out"
+OUTPUT_ROOT="${SCRIPT_DIR}/outputs"
+HARD_OUT_DIR="${OUTPUT_ROOT}/hard"
+SOFT_OUT_DIR="${OUTPUT_ROOT}/soft"
+VALID_OUT_DIR="${OUTPUT_ROOT}/validation"
 
-declare -A RI_PATHS=(
-  [B_Cell]="${BASE}/rmats/B_only/RI.MATS.JC.txt"
-  [T_Cell]="${BASE}/rmats/T_only/RI.MATS.JC.txt"
-  [Macrophage]="${BASE}/rmats/Macrophage_only/RI.MATS.JC.txt"
-)
+mkdir -p "${HARD_OUT_DIR}" "${SOFT_OUT_DIR}" "${VALID_OUT_DIR}"
 
-declare -A A3SS_PATHS=(
-  [B_Cell]="${BASE}/rmats/B_only/A3SS.MATS.JC.txt"
-  [T_Cell]="${BASE}/rmats/T_only/A3SS.MATS.JC.txt"
-  [Macrophage]="${BASE}/rmats/Macrophage_only/A3SS.MATS.JC.txt"
-)
-
-declare -A A5SS_PATHS=(
-  [B_Cell]="${BASE}/rmats/B_only/A5SS.MATS.JC.txt"
-  [T_Cell]="${BASE}/rmats/T_only/A5SS.MATS.JC.txt"
-  [Macrophage]="${BASE}/rmats/Macrophage_only/A5SS.MATS.JC.txt"
+declare -A CELL_TO_SUBDIR=(
+  [B_Cell]="B_only"
+  [T_Cell]="T_only"
+  [Macrophage]="Macrophage_only"
 )
 
 declare -A GTF_PATHS=(
-  [B_Cell]="${BASE}/compute_psi/stringtie_out/dominant_isoforms/B_Cell_dominant.gtf"
-  [T_Cell]="${BASE}/compute_psi/stringtie_out/dominant_isoforms/T_Cell_dominant.gtf"
-  [Macrophage]="${BASE}/compute_psi/stringtie_out/dominant_isoforms/Macrophage_dominant.gtf"
+  [B_Cell]="${STRINGTIE_ROOT}/B_Cell_aggregate.gtf"
+  [T_Cell]="${STRINGTIE_ROOT}/T_Cell_aggregate.gtf"
+  [Macrophage]="${STRINGTIE_ROOT}/Macrophage_aggregate.gtf"
+)
+
+declare -A EVENT_FILES=(
+  [SE]="SE.MATS.JC.txt"
+  [RI]="RI.MATS.JC.txt"
+  [A3SS]="A3SS.MATS.JC.txt"
+  [A5SS]="A5SS.MATS.JC.txt"
 )
 
 for CT in B_Cell T_Cell Macrophage; do
@@ -45,38 +43,75 @@ for CT in B_Cell T_Cell Macrophage; do
   echo "[INFO] Processing ${CT}"
   echo "=========================================="
 
-  HARD_OUT_DIR="${TEST_DIR}/hard_output_test"
-  SOFT_OUT_DIR="${TEST_DIR}/soft_output_test"
-  VALID_OUT_DIR="${TEST_DIR}/validation_tracks"
-  mkdir -p "${HARD_OUT_DIR}" "${SOFT_OUT_DIR}" "${VALID_OUT_DIR}"
+  subdir="${CELL_TO_SUBDIR[${CT}]}"
+  rmats_dir="${RMATS_ROOT}/${subdir}"
+  sentinel="${rmats_dir}/rmats_complete.flag"
+
+  if [[ -z "${subdir}" ]]; then
+    echo "[WARN] No rMATS directory mapping for ${CT}; skipping"
+    continue
+  fi
+
+  if [[ ! -f "${sentinel}" ]]; then
+    echo "[WARN] rMATS run incomplete for ${CT} (missing ${sentinel}); skipping"
+    continue
+  fi
+
+  gtf_path="${GTF_PATHS[${CT}]}"
+  if [[ ! -f "${gtf_path}" ]]; then
+    echo "[WARN] Missing GTF for ${CT}: ${gtf_path}; skipping"
+    continue
+  fi
+
+  se_path="${rmats_dir}/${EVENT_FILES[SE]}"
+  ri_path="${rmats_dir}/${EVENT_FILES[RI]}"
+  a3_path="${rmats_dir}/${EVENT_FILES[A3SS]}"
+  a5_path="${rmats_dir}/${EVENT_FILES[A5SS]}"
+
+  if [[ ! -f "${se_path}" ]]; then
+    echo "[WARN] Missing SE data for ${CT}: ${se_path}; skipping"
+    continue
+  fi
+
+  for event in SE RI A3SS A5SS; do
+    path="${rmats_dir}/${EVENT_FILES[${event}]}"
+    if [[ ! -f "${path}" ]]; then
+      echo "[WARN] Missing ${event} data for ${CT}: ${path}"
+    fi
+  done
+
+  hard_bed="${HARD_OUT_DIR}/${CT}_hard_labels.bed"
+  hard_summary="${HARD_OUT_DIR}/${CT}_hard_label_summary.tsv"
+  soft_bed="${SOFT_OUT_DIR}/${CT}_soft_labels.bed"
+  soft_summary="${SOFT_OUT_DIR}/${CT}_soft_label_summary.tsv"
+  validation_bed="${VALID_OUT_DIR}/${CT}_validation_diff.bed"
 
   # 1. Generate Hard Labels
   python "${HARD_SCRIPT}" \
-    --rmats-se "${SE_PATHS[$CT]}" \
-    --rmats-ri "${RI_PATHS[$CT]}" \
-    --rmats-a3ss "${A3SS_PATHS[$CT]}" \
-    --rmats-a5ss "${A5SS_PATHS[$CT]}" \
-    --gtf "${GTF_PATHS[$CT]}" \
-    --out-bed "${HARD_OUT_DIR}/${CT}_hard_labels.bed" \
-    --summary "${HARD_OUT_DIR}/${CT}_hard_label_summary.tsv"
+    --rmats-se "${se_path}" \
+    --rmats-ri "${ri_path}" \
+    --rmats-a3ss "${a3_path}" \
+    --rmats-a5ss "${a5_path}" \
+    --gtf "${gtf_path}" \
+    --out-bed "${hard_bed}" \
+    --summary "${hard_summary}"
 
   # 2. Generate Soft Labels
   python "${SOFT_SCRIPT}" \
-    --rmats-se "${SE_PATHS[$CT]}" \
-    --rmats-ri "${RI_PATHS[$CT]}" \
-    --rmats-a3ss "${A3SS_PATHS[$CT]}" \
-    --rmats-a5ss "${A5SS_PATHS[$CT]}" \
-    --gtf "${GTF_PATHS[$CT]}" \
-    --out-bed "${SOFT_OUT_DIR}/${CT}_soft_labels.bed" \
-    --summary "${SOFT_OUT_DIR}/${CT}_soft_label_summary.tsv"
+    --rmats-se "${se_path}" \
+    --rmats-ri "${ri_path}" \
+    --rmats-a3ss "${a3_path}" \
+    --rmats-a5ss "${a5_path}" \
+    --gtf "${gtf_path}" \
+    --out-bed "${soft_bed}" \
+    --summary "${soft_summary}"
 
   # 3. Generate Validation Disagreements
-  # Note: The validation script doesn't need changes; it just compares BED vs GTF
   echo "[INFO] Generating Validation Track..."
   python "${VALID_SCRIPT}" \
-    --gtf "${GTF_PATHS[$CT]}" \
-    --hard-bed "${HARD_OUT_DIR}/${CT}_hard_labels.bed" \
-    --out-bed "${VALID_OUT_DIR}/${CT}_validation_diff.bed"
+    --gtf "${gtf_path}" \
+    --hard-bed "${hard_bed}" \
+    --out-bed "${validation_bed}"
 
 done
 
