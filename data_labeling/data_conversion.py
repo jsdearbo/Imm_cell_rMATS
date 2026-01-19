@@ -281,6 +281,12 @@ def parse_args():
         "--bed", action="append", default=[],
         help="BED path for the *most recent* --cell-type (repeat)."
     )
+    ap.add_argument(
+        "--chroms",
+        type=str,
+        default=None,
+        help="Comma-separated list of chromosomes to include (e.g. chr1,chr2)"
+    )
     return ap.parse_args()
 
 
@@ -313,6 +319,10 @@ def main():
 
     fasta = FastaReader(args.fasta)
     transcript_df = load_transcripts_tsv(args.transcripts)
+
+    if args.chroms is not None:
+        keep = set(c.strip() for c in args.chroms.split(","))
+        transcript_df = transcript_df[transcript_df["Chromosome"].isin(keep)]
 
     manifest_path = Path(args.out_dir) / "manifest.tsv"
     if not manifest_path.exists():
