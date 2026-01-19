@@ -9,6 +9,11 @@ MANIFEST_SRC="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/data_labeling/output
 
 BASE_OUT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/labelled_data/windowed"
 
+# Chromosome splits
+TRAIN_CHROMS=$(echo chr{1..9},chr{12..19},chrX,chrY | tr ' ' ',')
+VAL_CHROMS="chr10"
+TEST_CHROMS="chr11"
+
 declare -A TRANSCRIPTS=(
   [B_Cell]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out/dominant_isoforms/B_Cell_transcripts.tsv"
   [T_Cell]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out/dominant_isoforms/T_Cell_transcripts.tsv"
@@ -23,19 +28,51 @@ for CELL in "${!TRANSCRIPTS[@]}"; do
   OUT_DIR="${BASE_OUT}/${CELL}"
   mkdir -p "${OUT_DIR}"
 
-  # Reuse the same manifest, filtered implicitly by transcripts + task index
+  # Copy manifest once per dataset
   cp "${MANIFEST_SRC}" "${OUT_DIR}/manifest.tsv"
 
+  # --------------------
+  # TRAIN
+  # --------------------
   python "${PYTHON_SCRIPT}" \
     --fasta "${GENOME_FASTA}" \
     --transcripts "${TRANSCRIPTS[$CELL]}" \
     --out-dir "${OUT_DIR}" \
     --split train \
-    --window-bp 196608 \
+    --chroms "${TRAIN_CHROMS}" \
+    --window-bp 524288 \
     --bin-size 32 \
-    --stride-bp 98304 \
+    --stride-bp 196608 \
     --shard-size 256
+
+  # --------------------
+  # VAL
+  # --------------------
+  python "${PYTHON_SCRIPT}" \
+    --fasta "${GENOME_FASTA}" \
+    --transcripts "${TRANSCRIPTS[$CELL]}" \
+    --out-dir "${OUT_DIR}" \
+    --split val \
+    --chroms "${VAL_CHROMS}" \
+    --window-bp 524288 \
+    --bin-size 32 \
+    --stride-bp 196608 \
+    --shard-size 128
+
+  # --------------------
+  # TEST
+  # --------------------
+  python "${PYTHON_SCRIPT}" \
+    --fasta "${GENOME_FASTA}" \
+    --transcripts "${TRANSCRIPTS[$CELL]}" \
+    --out-dir "${OUT_DIR}" \
+    --split test \
+    --chroms "${TEST_CHROMS}" \
+    --window-bp 524288 \
+    --bin-size 32 \
+    --stride-bp 196608 \
+    --shard-size 128
 
 done
 
-echo "[INFO] Full data conversion complete."
+echo "[INFO] Full data conversion complete (train/val/test)."
