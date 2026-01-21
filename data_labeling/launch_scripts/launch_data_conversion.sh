@@ -1,78 +1,72 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_SCRIPT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/data_labeling/data_conversion.py"
+# --------------------
+# Configuration
+# --------------------
+PYTHON_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/data_conversion.py"
+GENOME_FASTA="/mnt/data_sda/jdearborn/genomes/mouse/mm10/fasta/GRCm38.primary_assembly.genome.fa"
+MANIFEST="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/outputs_soft_per_sample/soft/manifest.tsv"
 
-GENOME_FASTA="/mnt/netfiles/genomes/STAR/mm10/GRCm38.primary_assembly.genome.fa"
+# IMPORTANT: transcript union TSV
+# You should create this once by concatenating and de-duplicating
+TRANSCRIPTS_ALL="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/stringtie_out/dominant_isoforms/all_celltypes_transcripts.tsv"
 
-MANIFEST_SRC="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/data_labeling/outputs_soft_per_sample/soft/manifest.tsv"
+BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/windowed_multitask"
 
-BASE_OUT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/labelled_data/windowed"
-
+# --------------------
 # Chromosome splits
+# --------------------
 TRAIN_CHROMS=$(echo chr{1..9},chr{12..19},chrX,chrY | tr ' ' ',')
 VAL_CHROMS="chr10"
 TEST_CHROMS="chr11"
 
-declare -A TRANSCRIPTS=(
-  [B_Cell]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out/dominant_isoforms/B_Cell_transcripts.tsv"
-  [T_Cell]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out/dominant_isoforms/T_Cell_transcripts.tsv"
-  [Macrophage]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results/stringtie_out/dominant_isoforms/Macrophage_transcripts.tsv"
-)
+mkdir -p "${BASE_OUT}"
+cp "${MANIFEST}" "${BASE_OUT}/manifest.tsv"
 
-for CELL in "${!TRANSCRIPTS[@]}"; do
-  echo "=========================================="
-  echo "[INFO] Converting dataset for ${CELL}"
-  echo "=========================================="
+# --------------------
+# TRAIN
+# --------------------
+python "${PYTHON_SCRIPT}" \
+  --fasta "${GENOME_FASTA}" \
+  --transcripts "${TRANSCRIPTS_ALL}" \
+  --out-dir "${BASE_OUT}" \
+  --split train \
+  --chroms "${TRAIN_CHROMS}" \
+  --window-bp 524288 \
+  --bin-size 32 \
+  --stride-bp 262144 \
+  --shard-size 256 \
+  --manifest "${MANIFEST}"
 
-  OUT_DIR="${BASE_OUT}/${CELL}"
-  mkdir -p "${OUT_DIR}"
+# --------------------
+# VAL
+# --------------------
+python "${PYTHON_SCRIPT}" \
+  --fasta "${GENOME_FASTA}" \
+  --transcripts "${TRANSCRIPTS_ALL}" \
+  --out-dir "${BASE_OUT}" \
+  --split val \
+  --chroms "${VAL_CHROMS}" \
+  --window-bp 524288 \
+  --bin-size 32 \
+  --stride-bp 262144 \
+  --shard-size 128 \
+  --manifest "${MANIFEST}"
 
-  # Copy manifest once per dataset
-  cp "${MANIFEST_SRC}" "${OUT_DIR}/manifest.tsv"
+# --------------------
+# TEST
+# --------------------
+python "${PYTHON_SCRIPT}" \
+  --fasta "${GENOME_FASTA}" \
+  --transcripts "${TRANSCRIPTS_ALL}" \
+  --out-dir "${BASE_OUT}" \
+  --split test \
+  --chroms "${TEST_CHROMS}" \
+  --window-bp 524288 \
+  --bin-size 32 \
+  --stride-bp 262144 \
+  --shard-size 128 \
+  --manifest "${MANIFEST}"
 
-  # --------------------
-  # TRAIN
-  # --------------------
-  python "${PYTHON_SCRIPT}" \
-    --fasta "${GENOME_FASTA}" \
-    --transcripts "${TRANSCRIPTS[$CELL]}" \
-    --out-dir "${OUT_DIR}" \
-    --split train \
-    --chroms "${TRAIN_CHROMS}" \
-    --window-bp 524288 \
-    --bin-size 32 \
-    --stride-bp 196608 \
-    --shard-size 256
-
-  # --------------------
-  # VAL
-  # --------------------
-  python "${PYTHON_SCRIPT}" \
-    --fasta "${GENOME_FASTA}" \
-    --transcripts "${TRANSCRIPTS[$CELL]}" \
-    --out-dir "${OUT_DIR}" \
-    --split val \
-    --chroms "${VAL_CHROMS}" \
-    --window-bp 524288 \
-    --bin-size 32 \
-    --stride-bp 196608 \
-    --shard-size 128
-
-  # --------------------
-  # TEST
-  # --------------------
-  python "${PYTHON_SCRIPT}" \
-    --fasta "${GENOME_FASTA}" \
-    --transcripts "${TRANSCRIPTS[$CELL]}" \
-    --out-dir "${OUT_DIR}" \
-    --split test \
-    --chroms "${TEST_CHROMS}" \
-    --window-bp 524288 \
-    --bin-size 32 \
-    --stride-bp 196608 \
-    --shard-size 128
-
-done
-
-echo "[INFO] Full data conversion complete (train/val/test)."
+echo "[INFO] Multitask data conversion complete (train/val/test)."

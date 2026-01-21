@@ -36,6 +36,9 @@ def load_label_intervals(bed_path: str) -> pd.DataFrame:
         names=["Chromosome", "Start", "End", "p_exon"],
         dtype={"Chromosome": str},
     )
+    df["Start"] = pd.to_numeric(df["Start"], errors="coerce")
+    df["End"] = pd.to_numeric(df["End"], errors="coerce")
+    df = df.dropna(subset=["Start", "End"]).reset_index(drop=True)
     df["Start"] = df["Start"].astype(int)
     df["End"] = df["End"].astype(int)
     df["p_exon"] = df["p_exon"].astype(float)
@@ -55,6 +58,10 @@ def load_transcripts_tsv(path: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Transcript TSV missing columns: {sorted(missing)}")
 
+    df["Start"] = pd.to_numeric(df["Start"], errors="coerce")
+    df["End"] = pd.to_numeric(df["End"], errors="coerce")
+    df = df.dropna(subset=["Start", "End"]).reset_index(drop=True)
+
     df["Start"] = df["Start"].astype(int)
     df["End"] = df["End"].astype(int)
     df = df[df["Start"] < df["End"]].reset_index(drop=True)
@@ -68,17 +75,28 @@ def load_transcripts_tsv(path: str) -> pd.DataFrame:
 # NOTE: Strand is intentionally ignored.
 # Borzoi learns strand via RC augmentation.
 
-def iter_windows(transcript_df: pd.DataFrame, window_bp: int, stride_bp: int):
+def iter_windows_from_regions(
+    regions_df: pd.DataFrame,
+    window_bp: int,
+    stride_bp: int,
+):
     """
-    Yields (chrom, window_start, window_end) for each transcript interval.
+    Yield genomic windows from the UNION of transcript regions per chromosome.
+
+    regions_df must contain Chromosome, Start, End (0-based, half-open).
     """
-    # Assumes transcript_df already filtered for a single chromosome if desired
-    for _, row in transcript_df.iterrows():
-        start = int(row.Start)
-        end = int(row.End)
-        chrom = row.Chromosome
+    required = {"Chromosome", "Start", "End"}
+    missing = required - set(regions_df.columns)
+    if missing:
+        raise ValueError(f"regions_df missing columns: {sorted(missing)}")
+
+    for chrom, sub in regions_df.groupby("Chromosome"):
+        start = int(sub["Start"].min())
+        end = int(sub["End"].max())
+
         if end - start < window_bp:
             continue
+
         for w_start in range(start, end - window_bp + 1, stride_bp):
             yield chrom, int(w_start), int(w_start + window_bp)
 
@@ -89,17 +107,21 @@ def rasterize_window(
     bin_size: int,
     label_df: pd.DataFrame,
     n_bins: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+):
     """
-    Length-weighted mean p_exon per bin. Returns (targets, counts).
-    counts[b] is total overlapped bp in that bin (0..bin_size).
+    Length-weighted mean p_exon per bin.
+
+    Returns:
+      targets[b] = mean p_exon
+      counts[b]  = bp covered by *any* transcript segment
+      events[b]  = bp covered by a PSI-defined event (non-NaN)
     """
     targets = np.zeros(n_bins, dtype=np.float32)
     counts = np.zeros(n_bins, dtype=np.float32)
+    events = np.zeros(n_bins, dtype=np.float32)
 
-    # Fast reject if empty
     if label_df.empty:
-        return targets, counts
+        return targets, counts, events
 
     for _, row in label_df.iterrows():
         s = max(int(row.Start), window_start)
@@ -107,23 +129,29 @@ def rasterize_window(
         if s >= e:
             continue
 
-        # Bin indices (0-based)
         b0 = (s - window_start) // bin_size
-        b1 = (e - window_start + bin_size - 1) // bin_size  # ceil
+        b1 = (e - window_start + bin_size - 1) // bin_size
 
-        p = float(row.p_exon)
+        p = row.p_exon
+        has_event = not np.isnan(p)
 
         for b in range(int(b0), int(b1)):
             bin_s = window_start + b * bin_size
             bin_e = bin_s + bin_size
             ov = max(0, min(e, bin_e) - max(s, bin_s))
-            if ov > 0:
-                targets[b] += ov * p
-                counts[b] += ov
+            if ov <= 0:
+                continue
 
-    nz = counts > 0
-    targets[nz] /= counts[nz]
-    return targets, counts
+            counts[b] += ov
+
+            if has_event:
+                targets[b] += ov * float(p)
+                events[b] += ov
+
+    nz = events > 0
+    targets[nz] /= events[nz]
+
+    return targets, counts, events
 
 
 def one_hot_encode(seq: str) -> np.ndarray:
@@ -160,6 +188,7 @@ def save_shard(examples: List[dict], out_dir: str, split: str, shard_id: int):
         chrom=np.array([e["chrom"] for e in examples], dtype="U"),
         window_start=np.array([e["window_start"] for e in examples], dtype=np.int64),
         window_end=np.array([e["window_end"] for e in examples], dtype=np.int64),
+        has_signal=np.array([e["has_signal"] for e in examples], dtype=np.float32),
     )
 
 
@@ -170,18 +199,18 @@ def write_dataset_shards(
     celltype_to_task_idx: Dict[str, int],
     out_dir: str,
     split: str,
-    window_bp: int = 131072,
+    window_bp: int = 524288,
     bin_size: int = 32,
-    stride_bp: int = 65536,
+    stride_bp: int = 262144,
     shard_size: int = 128,
     max_examples: Optional[int] = None,
 ):
     if window_bp % bin_size != 0:
         raise ValueError(f"window_bp ({window_bp}) must be divisible by bin_size ({bin_size})")
+
     n_bins = window_bp // bin_size
     n_tasks = len(celltype_to_task_idx)
 
-    # Basic transcript sanity
     required = {"Chromosome", "Start", "End"}
     missing = required - set(transcript_df.columns)
     if missing:
@@ -191,10 +220,22 @@ def write_dataset_shards(
     shard_id = 0
     emitted = 0
 
-    # Iterate cell types (one head per cell type)
+    # Use transcript UNION for windowing
+    FLANK = 262_144  # half-window
+
+    # regions_df = transcript_df[["Chromosome","Start","End"]].copy()
+
+    regions_df = transcript_df.copy()
+    regions_df["Start"] = (regions_df["Start"] - FLANK).clip(lower=0)
+    regions_df["End"] = regions_df["End"] + FLANK
+    # Expand transcript spans so PSI events can land in the central prediction region
+    # after Borzoi cropping (±163,840 bp) within a 524,288 bp input window.
+    regions_df = regions_df[["Chromosome","Start","End"]]
+
+    windows = list(iter_windows_from_regions(regions_df, window_bp, stride_bp))
+    print(f"Total windows to scan: {len(windows)}")
+
     for cell_type, bed_paths in bed_files_by_celltype.items():
-        if cell_type not in celltype_to_task_idx:
-            raise KeyError(f"cell_type '{cell_type}' missing from celltype_to_task_idx")
         task_idx = int(celltype_to_task_idx[cell_type])
 
         for bed_path in bed_paths:
@@ -202,53 +243,58 @@ def write_dataset_shards(
             if label_df.empty:
                 continue
 
-            # Only consider chromosomes present in this BED
-            for chrom in sorted(label_df["Chromosome"].unique()):
-                tdf = transcript_df[transcript_df["Chromosome"] == chrom]
-                if tdf.empty:
+            for chrom, w_start, w_end in windows:
+                # Subset labels to current chrom
+                ldf_chr = label_df[label_df["Chromosome"] == chrom]
+                if ldf_chr.empty:
                     continue
 
-                ldf_chr = label_df[label_df["Chromosome"] == chrom]
+                seq = fasta.fetch(chrom, w_start, w_end)
+                if len(seq) != window_bp:
+                    continue
 
-                for _chrom, w_start, w_end in iter_windows(tdf, window_bp, stride_bp):
-                    seq = fasta.fetch(_chrom, w_start, w_end)
-                    if "N" * window_bp == seq:
-                        continue
+                # Skip windows that are mostly Ns (>50%)
+                if seq.upper().count("N") / window_bp > 0.5:
+                    continue
 
-                    if len(seq) != window_bp:
-                        continue
+                y = np.zeros((n_bins, n_tasks), dtype=np.float32)
 
-                    y = np.zeros((n_bins, n_tasks), dtype=np.float32)
+                targ, counts, events = rasterize_window(
+                    w_start, w_end, bin_size, ldf_chr, n_bins
+                )
+                y[:, task_idx] = targ
 
-                    targ, counts = rasterize_window(
-                        w_start, w_end, bin_size, ldf_chr, n_bins
-                    )
-                    y[:, task_idx] = targ
+                if np.any(y[:, np.arange(n_tasks) != task_idx]):
+                    raise RuntimeError("Nonzero values detected in non-target task columns")
 
-                    # Correct mask: 1 where there was *any* label support (transcript space / overlaps)
-                    mask = (counts > 0).astype(np.float32)
+                # Mask indicates bins with PSI-defined supervision.
+                # Bins outside PSI events contribute zero loss.
+                mask = (events > 0).astype(np.float32)
 
-                    examples.append({
-                        "sequence": one_hot_encode(seq),
-                        "targets": y,
-                        "mask": mask,
-                        "cell_type": cell_type,
-                        "bed_path": str(bed_path),
-                        "chrom": _chrom,
-                        "window_start": int(w_start),
-                        "window_end": int(w_end),
-                    })
+                has_signal = float(mask.sum() > 0)
 
-                    emitted += 1
-                    if (max_examples is not None) and (emitted >= max_examples):
-                        if examples:
-                            save_shard(examples, out_dir, split, shard_id)
-                        return
+                examples.append({
+                    "sequence": one_hot_encode(seq),
+                    "targets": y,
+                    "mask": mask,
+                    "cell_type": cell_type,
+                    "bed_path": str(bed_path),
+                    "chrom": chrom,
+                    "window_start": int(w_start),
+                    "window_end": int(w_end),
+                    "has_signal": has_signal,
+                })
 
-                    if len(examples) >= shard_size:
+                emitted += 1
+                if max_examples is not None and emitted >= max_examples:
+                    if examples:
                         save_shard(examples, out_dir, split, shard_id)
-                        shard_id += 1
-                        examples = []
+                    return
+
+                if len(examples) >= shard_size:
+                    save_shard(examples, out_dir, split, shard_id)
+                    shard_id += 1
+                    examples = []
 
     if examples:
         save_shard(examples, out_dir, split, shard_id)
@@ -280,6 +326,14 @@ def parse_args():
     ap.add_argument(
         "--bed", action="append", default=[],
         help="BED path for the *most recent* --cell-type (repeat)."
+    )
+    ap.add_argument(
+        "--manifest",
+        default=None,
+        help=(
+            "Optional TSV manifest mapping cell_type to bed_path. "
+            "If omitted, defaults to <out-dir>/manifest.tsv."
+        ),
     )
     ap.add_argument(
         "--chroms",
@@ -324,7 +378,10 @@ def main():
         keep = set(c.strip() for c in args.chroms.split(","))
         transcript_df = transcript_df[transcript_df["Chromosome"].isin(keep)]
 
-    manifest_path = Path(args.out_dir) / "manifest.tsv"
+    if args.manifest is not None:
+        manifest_path = Path(args.manifest)
+    else:
+        manifest_path = Path(args.out_dir) / "manifest.tsv"
     if not manifest_path.exists():
         raise FileNotFoundError(
             f"Expected manifest TSV at {manifest_path}"
@@ -337,12 +394,19 @@ def main():
     if missing:
         raise ValueError(f"Manifest missing columns: {sorted(missing)}")
 
+    # Manifest is expected to describe a single multitask dataset covering all cell types.
     bed_files_by_celltype: Dict[str, List[str]] = {}
-    for ct, sub in manifest.groupby("cell_type"):
-        bed_files_by_celltype[ct] = sub["bed_path"].tolist()
+    for ct, sub in manifest.groupby("cell_type", sort=False):
+        if ct not in bed_files_by_celltype:
+            bed_files_by_celltype[ct] = []
+        bed_files_by_celltype[ct].extend(sub["bed_path"].tolist())
 
     celltypes = sorted(bed_files_by_celltype.keys())
     celltype_to_task_idx = {ct: i for i, ct in enumerate(celltypes)}
+
+    print("Building multitask dataset with cell types in order:")
+    for ct, idx in celltype_to_task_idx.items():
+        print(f"  task[{idx}] = {ct}")
 
     write_dataset_shards(
         fasta=fasta,
