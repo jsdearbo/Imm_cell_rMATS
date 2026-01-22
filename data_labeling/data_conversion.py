@@ -204,6 +204,8 @@ def write_dataset_shards(
     stride_bp: int = 262144,
     shard_size: int = 128,
     max_examples: Optional[int] = None,
+    subset_mode: str = "all",
+    seed: int = 42,
 ):
     if window_bp % bin_size != 0:
         raise ValueError(f"window_bp ({window_bp}) must be divisible by bin_size ({bin_size})")
@@ -220,6 +222,11 @@ def write_dataset_shards(
     shard_id = 0
     emitted = 0
 
+    # For balanced sampling we track counts per cell type
+    rng = np.random.default_rng(seed)
+    event_counts: Dict[str, int] = {ct: 0 for ct in bed_files_by_celltype}
+    non_event_counts: Dict[str, int] = {ct: 0 for ct in bed_files_by_celltype}
+
     # Use transcript UNION for windowing
     FLANK = 262_144  # half-window
 
@@ -229,7 +236,7 @@ def write_dataset_shards(
     regions_df["Start"] = (regions_df["Start"] - FLANK).clip(lower=0)
     regions_df["End"] = regions_df["End"] + FLANK
     # Expand transcript spans so PSI events can land in the central prediction region
-    # after Borzoi cropping (±163,840 bp) within a 524,288 bp input window.
+    # after Borzoi cropping (Â±163,840 bp) within a 524,288 bp input window.
     regions_df = regions_df[["Chromosome","Start","End"]]
 
     windows = list(iter_windows_from_regions(regions_df, window_bp, stride_bp))
@@ -273,28 +280,48 @@ def write_dataset_shards(
 
                 has_signal = float(mask.sum() > 0)
 
-                examples.append({
-                    "sequence": one_hot_encode(seq),
-                    "targets": y,
-                    "mask": mask,
-                    "cell_type": cell_type,
-                    "bed_path": str(bed_path),
-                    "chrom": chrom,
-                    "window_start": int(w_start),
-                    "window_end": int(w_end),
-                    "has_signal": has_signal,
-                })
+                # Decide whether to include this example based on subset_mode
+                include = True
+                if subset_mode == "event_only":
+                    # Only include windows with at least one splicing event
+                    include = bool(has_signal)
+                elif subset_mode == "balanced":
+                    # Balanced 50:50 between windows with signal and without signal per cell type
+                    ct = cell_type
+                    if has_signal:
+                        event_counts[ct] += 1
+                        include = True
+                    else:
+                        # include only if non_event_count < event_count
+                        if non_event_counts[ct] < event_counts[ct]:
+                            non_event_counts[ct] += 1
+                            include = True
+                        else:
+                            include = False
 
-                emitted += 1
-                if max_examples is not None and emitted >= max_examples:
-                    if examples:
+                if include:
+                    examples.append({
+                        "sequence": one_hot_encode(seq),
+                        "targets": y,
+                        "mask": mask,
+                        "cell_type": cell_type,
+                        "bed_path": str(bed_path),
+                        "chrom": chrom,
+                        "window_start": int(w_start),
+                        "window_end": int(w_end),
+                        "has_signal": has_signal,
+                    })
+
+                    emitted += 1
+                    if max_examples is not None and emitted >= max_examples:
+                        if examples:
+                            save_shard(examples, out_dir, split, shard_id)
+                        return
+
+                    if len(examples) >= shard_size:
                         save_shard(examples, out_dir, split, shard_id)
-                    return
-
-                if len(examples) >= shard_size:
-                    save_shard(examples, out_dir, split, shard_id)
-                    shard_id += 1
-                    examples = []
+                        shard_id += 1
+                        examples = []
 
     if examples:
         save_shard(examples, out_dir, split, shard_id)
@@ -317,6 +344,23 @@ def parse_args():
     ap.add_argument("--stride-bp", type=int, default=65536)
     ap.add_argument("--shard-size", type=int, default=128)
     ap.add_argument("--max-examples", type=int, default=None, help="Cap examples for smoke tests.")
+
+    ap.add_argument(
+        "--subset-mode",
+        choices=["all", "event_only", "balanced"],
+        default="all",
+        help=(
+            "Window selection strategy. "
+            "'all' includes every window, 'event_only' keeps only windows overlapping PSI events, "
+            "'balanced' attempts to balance windows with and without PSI events per cell type."
+        ),
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed used for balanced sampling."
+    )
 
     # Repeated args: --cell-type B_Cell --bed path1 --bed path2 ...
     ap.add_argument(
@@ -362,7 +406,7 @@ def build_bed_map(cell_types: List[str], beds: List[str]) -> Dict[str, List[str]
     # Implement by scanning argv would be cleaner; here we require users to pass bed lists per ct
     # via comma-separated values as a safer interface.
     #
-    # Since you’re operating in controlled scripts, easiest is to pass a manifest instead.
+    # Since youâ€™re operating in controlled scripts, easiest is to pass a manifest instead.
     raise NotImplementedError(
         "For reliability, use a manifest TSV. See below in response for recommended usage."
     )
@@ -420,6 +464,8 @@ def main():
         stride_bp=args.stride_bp,
         shard_size=args.shard_size,
         max_examples=args.max_examples,
+        subset_mode=args.subset_mode,
+        seed=args.seed,
     )
 
 if __name__ == "__main__":
