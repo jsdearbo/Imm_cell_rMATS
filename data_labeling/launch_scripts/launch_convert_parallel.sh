@@ -8,20 +8,23 @@ PYTHON_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/data
 GENOME_FASTA="/mnt/data_sda/jdearborn/genomes/mouse/mm10/fasta/GRCm38.primary_assembly.genome.fa"
 MANIFEST="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/outputs_soft_per_sample/soft/manifest.tsv"
 TRANSCRIPTS_ALL="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/stringtie_out/dominant_isoforms/all_celltypes_transcripts.tsv"
-BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/windowed_multitask_fast"
+BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/multitask_confidence_event_only_augment_4"
 
 mkdir -p "${BASE_OUT}"
 cp "${MANIFEST}" "${BASE_OUT}/manifest.tsv"
 
-# Function to process a single chromosome (or set of chromosomes)
+# Function: process one chromosome
 run_chrom() {
     local SPLIT=$1
     local CHROM=$2
+    local PREFIX=$3
     
-    # Write to a temp subdirectory to avoid shard name collisions (shard_0000.npz)
     local SUB_DIR="${BASE_OUT}/${SPLIT}/${CHROM}"
     
-    echo "[${SPLIT}] Starting ${CHROM}..."
+    echo "[${SPLIT}] Starting ${CHROM} (Shard Prefix: ${PREFIX})..."
+    
+    # NOTE: Set --augment-k > 1 here to generate multiple shifted copies per window
+    # OR reduce --stride-bp to increase overlap.
     
     python "${PYTHON_SCRIPT}" \
       --fasta "${GENOME_FASTA}" \
@@ -31,8 +34,11 @@ run_chrom() {
       --split "${SPLIT}/${CHROM}" \
       --chroms "${CHROM}" \
       --window-bp 524288 \
-      --subset-mode balanced \
-      --shard-size 256 > "${BASE_OUT}/log_${CHROM}.txt" 2>&1
+      --subset-mode event_only \
+      --shard-size 256 \
+      --jitter-bp 16 \
+      --augment-k 4 \
+      --shard-prefix "${PREFIX}" > "${BASE_OUT}/log_${CHROM}.txt" 2>&1
       
     echo "[${SPLIT}] Finished ${CHROM}"
 }
@@ -44,38 +50,58 @@ export PYTHON_SCRIPT GENOME_FASTA MANIFEST TRANSCRIPTS_ALL BASE_OUT
 # EXECUTION
 # --------------------
 
-# List of chromosomes
+# 1. TRAIN SPLIT (Parallel)
 CHROMS_TRAIN="chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chrX chrY"
 
 echo "Launching Parallel Jobs for TRAIN..."
 
-# Method 1: If you have GNU parallel installed (Recommended)
-# parallel -j 5 run_chrom train ::: ${CHROMS_TRAIN}
-
-# Method 2: Simple bash background loops (If no GNU parallel)
+# Launch jobs in background
+# We increment prefix by 10000 for each chromosome (Increased to handle potential augmentation data scale)
+PREFIX=0
+STEP=10000
 MAX_JOBS=5
 count=0
+
 for chrom in ${CHROMS_TRAIN}; do
-    run_chrom train "$chrom" &
+    run_chrom train "$chrom" "$PREFIX" &
     
-    # Simple job throttling
+    PREFIX=$((PREFIX + STEP))
     count=$((count+1))
+    
+    # Simple throttling
     if [ "$count" -ge "$MAX_JOBS" ]; then
-        wait -n # Wait for at least one job to finish
+        wait -n
         count=$((count-1))
     fi
 done
-wait # Wait for all remaining
+
+# 2. VAL SPLIT (Single Job - chr10)
+# Run in background but part of the pool
+run_chrom val "chr10" 0 &
+count=$((count+1))
+
+# 3. TEST SPLIT (Single Job - chr11)
+run_chrom test "chr11" 0 &
+
+wait
 
 # --------------------
-# MERGING
+# MERGING (Clean)
 # --------------------
-# Move all shards from train/chrX/*.npz to train/*.npz
+# Now we can just move the files because names are unique
 echo "Merging shards..."
-mkdir -p "${BASE_OUT}/train"
-find "${BASE_OUT}/train" -mindepth 2 -name "*.npz" -print0 | xargs -0 -I {} mv --backup=t {} "${BASE_OUT}/train/"
+mkdir -p "${BASE_OUT}/train" "${BASE_OUT}/val" "${BASE_OUT}/test"
 
-# Clean up empty chrom dirs
-find "${BASE_OUT}/train" -type d -empty -delete
+# Function to merge a split
+merge_split() {
+    local SPLIT=$1
+    echo "  Merging ${SPLIT}..."
+    find "${BASE_OUT}/${SPLIT}" -mindepth 2 -name "shard_*.npz" -print0 | xargs -0 -r -I {} mv {} "${BASE_OUT}/${SPLIT}/"
+    find "${BASE_OUT}/${SPLIT}" -type d -empty -delete
+}
+
+merge_split "train"
+merge_split "val"
+merge_split "test"
 
 echo "Done."
