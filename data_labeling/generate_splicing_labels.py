@@ -108,20 +108,27 @@ def collapse_exon_coords_weighted(df):
     
     summed = df.groupby(gcols, observed=True, as_index=False).agg(agg_dict)
     
-    # Recompute psi_i from summed counts
+    # Recompute per-sample psi_i from summed counts
     for i in range(len(ijc_cols)):
         I = summed[f"ijc_{i}"].astype(float)
         S = summed[f"sjc_{i}"].astype(float)
         denom = I + S
         summed[f"psi_{i}"] = np.where(denom > 0, I / denom, np.nan)
-    
-    # Compute mean PSI across non-NA samples
+
+    # Compute pooled PSI across samples using summed read depth
+    # (preferred when sample depths differ)
+    total_ijc = summed[ijc_cols].sum(axis=1).astype(float)
+    total_sjc = summed[sjc_cols].sum(axis=1).astype(float)
+    pooled_denom = total_ijc + total_sjc
+    summed["psi_pooled"] = np.where(pooled_denom > 0, total_ijc / pooled_denom, np.nan)
+
+    # Keep mean-of-replicates for diagnostics/backward compatibility,
+    # but default downstream psi to pooled estimate.
     psi_cols = [c for c in summed.columns if c.startswith("psi_")]
-    summed["psi"] = summed[psi_cols].mean(axis=1, skipna=True)
-    
-    # Compute confidence: log(1 + total_reads_across_all_samples)
-    total_ijc = summed[ijc_cols].sum(axis=1)
-    total_sjc = summed[sjc_cols].sum(axis=1)
+    summed["psi_mean"] = summed[psi_cols].mean(axis=1, skipna=True)
+    summed["psi"] = summed["psi_pooled"].where(summed["psi_pooled"].notna(), summed["psi_mean"])
+
+    # Confidence tracks total read support across all samples
     summed["confidence"] = np.log1p(total_ijc + total_sjc)
     
     return summed
@@ -162,6 +169,8 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
             keep += ["psi"]
         if need_base:
             keep += ["base_exon"]
+        if need_conf and "confidence" not in df.columns:
+            df["confidence"] = 0.0
         if need_conf:
             keep += ["confidence"]
         missing = [c for c in keep if c not in df.columns]
@@ -527,13 +536,19 @@ def load_rmats_alt_site(rmats_file, min_coverage=20, mode="per-sample"):
     if df.empty:
         return pr.PyRanges()
 
+    payload_cols = [c for c in df.columns if c.startswith(("psi_", "ijc_", "sjc_"))]
+    if "psi_mean" in df.columns:
+        payload_cols.append("psi_mean")
+    if "coverage" in df.columns:
+        payload_cols.append("coverage")
+
     # Long exon
     long_df = df.rename(columns={
         'chr': 'Chromosome',
         'longExonStart_0base': 'Start',
         'longExonEnd': 'End',
         'strand': 'Strand'
-    })[['Chromosome','Start','End','Strand']]
+    })[['Chromosome','Start','End','Strand'] + payload_cols]
 
     # Short exon
     short_df = df.rename(columns={
