@@ -74,6 +74,53 @@ def _aggregate_exact_duplicates(df):
     # as_index=False returns a clean DataFrame directly
     return df.groupby(['Chromosome', 'Start', 'End', 'Strand'], observed=True, as_index=False).agg(agg_rules)
 
+def collapse_exon_coords_weighted(df):
+    """
+    Collapse duplicate exon coordinates by summing junction counts,
+    then recomputing PSI from aggregated counts.
+    
+    This is the CORRECT way to handle multiple rMATS rows with the same
+    cassette exon coords (different flanking contexts). Averaging PSI
+    gives equal weight to rare vs dominant isoforms; summing counts
+    then recomputing PSI gives proper read-weighted aggregation.
+    """
+    if df.empty:
+        return df
+    
+    df = df.reset_index(drop=True)
+    
+    # Identify per-sample count columns
+    ijc_cols = [c for c in df.columns if c.startswith("ijc_")]
+    sjc_cols = [c for c in df.columns if c.startswith("sjc_")]
+    
+    if not ijc_cols or not sjc_cols:
+        # Fallback: no per-sample counts available, use old behavior
+        return _aggregate_exact_duplicates(df)
+    
+    assert len(ijc_cols) == len(sjc_cols), "Mismatch between IJC and SJC column counts"
+    
+    gcols = ["Chromosome", "Start", "End", "Strand"]
+    
+    # Sum counts across contexts for same exon coords
+    agg_dict = {c: 'sum' for c in ijc_cols + sjc_cols}
+    if 'coverage' in df.columns:
+        agg_dict['coverage'] = 'sum'
+    
+    summed = df.groupby(gcols, observed=True, as_index=False).agg(agg_dict)
+    
+    # Recompute psi_i from summed counts
+    for i in range(len(ijc_cols)):
+        I = summed[f"ijc_{i}"].astype(float)
+        S = summed[f"sjc_{i}"].astype(float)
+        denom = I + S
+        summed[f"psi_{i}"] = np.where(denom > 0, I / denom, np.nan)
+    
+    # Compute mean PSI across non-NA samples
+    psi_cols = [c for c in summed.columns if c.startswith("psi_")]
+    summed["psi"] = summed[psi_cols].mean(axis=1, skipna=True)
+    
+    return summed
+
 def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=None, segments_df=None):
     """
     Two modes:
@@ -322,6 +369,21 @@ def _load_rmats_common(
                 continue
         return out
 
+    def parse_int_list(values):
+        """Parse comma-separated integers, replacing NA/empty with 0."""
+        if pd.isna(values):
+            return []
+        out = []
+        for t in str(values).split(","):
+            if t in {"", "NA"}:
+                out.append(0)
+            else:
+                try:
+                    out.append(int(float(t)))
+                except ValueError:
+                    out.append(0)
+        return out
+
     psi_lists = df["IncLevel1"].apply(parse_float_list)
 
     max_n = psi_lists.map(len).max()
@@ -340,6 +402,26 @@ def _load_rmats_common(
 
     if mode == "mean":
         df["psi_mean"] = psi_df.mean(axis=1, skipna=True)
+
+    # -----------------------------
+    # Parse per-sample IJC/SJC counts
+    # -----------------------------
+    ijc_lists = df["IJC_SAMPLE_1"].apply(parse_int_list)
+    sjc_lists = df["SJC_SAMPLE_1"].apply(parse_int_list)
+
+    # Pad/truncate to match max_n
+    def pad_to(xs, n, fill=0):
+        xs = list(xs)
+        if len(xs) < n:
+            xs += [fill] * (n - len(xs))
+        return xs[:n]
+
+    ijc_mat = np.vstack([pad_to(x, max_n) for x in ijc_lists.tolist()])
+    sjc_mat = np.vstack([pad_to(x, max_n) for x in sjc_lists.tolist()])
+
+    for i in range(max_n):
+        df[f"ijc_{i}"] = ijc_mat[:, i]
+        df[f"sjc_{i}"] = sjc_mat[:, i]
 
     # -----------------------------
     # Parse coverage (unchanged)
@@ -510,12 +592,13 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     rmats_a3ss = _ensure_pr(rmats_a3ss)
     rmats_a5ss = _ensure_pr(rmats_a5ss)
 
-    # PSI regions: concat + exact-duplicate aggregation (your current behavior)
+    # PSI regions: concat + weighted collapse by junction counts
     vars_list = [gr for gr in (rmats_se, rmats_ri, rmats_a3ss, rmats_a5ss) if len(gr) > 0]
     vars_pr = pr.concat(vars_list) if vars_list else pr.PyRanges()
     psi_df = pd.DataFrame(columns=['Chromosome','Start','End','Strand','psi'])
     if len(vars_pr):
-        vars_df = _aggregate_exact_duplicates(vars_pr.df)  # averages PSI for exact duplicates
+        # Use weighted collapse: sum counts, then recompute PSI
+        vars_df = collapse_exon_coords_weighted(vars_pr.df)
         psi_df = vars_df[['Chromosome','Start','End','Strand','psi']].copy()
 
     # Transcript and exon space from the dominant-isoform GTF
