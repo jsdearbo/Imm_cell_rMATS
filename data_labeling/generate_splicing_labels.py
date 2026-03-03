@@ -119,6 +119,11 @@ def collapse_exon_coords_weighted(df):
     psi_cols = [c for c in summed.columns if c.startswith("psi_")]
     summed["psi"] = summed[psi_cols].mean(axis=1, skipna=True)
     
+    # Compute confidence: log(1 + total_reads_across_all_samples)
+    total_ijc = summed[ijc_cols].sum(axis=1)
+    total_sjc = summed[sjc_cols].sum(axis=1)
+    summed["confidence"] = np.log1p(total_ijc + total_sjc)
+    
     return summed
 
 def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=None, segments_df=None):
@@ -135,13 +140,15 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
          Chromosome, Start, End, Strand, base_exon  (base_exon in {0.0, 1.0})
        Returns disjoint segments with p_exon assigned using priority PSI > base_exon.
     """
-    def _prep(df, need_psi=False, need_base=False):
+    def _prep(df, need_psi=False, need_base=False, need_conf=False):
         if df is None or (hasattr(df, "empty") and df.empty):
             cols = ["Chromosome", "Start", "End", "Strand"]
             if need_psi:
                 cols += ["psi"]
             if need_base:
                 cols += ["base_exon"]
+            if need_conf:
+                cols += ["confidence"]
             return pd.DataFrame(columns=cols)
 
         df = df.copy()
@@ -155,6 +162,8 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
             keep += ["psi"]
         if need_base:
             keep += ["base_exon"]
+        if need_conf:
+            keep += ["confidence"]
         missing = [c for c in keep if c not in df.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
@@ -227,10 +236,10 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
     # ---------------------------
     T = _prep(transcripts_df)
     E = _prep(exons_df)
-    P = _prep(psi_df, need_psi=True)
+    P = _prep(psi_df, need_psi=True, need_conf=True)
 
     if T.empty:
-        return pd.DataFrame(columns=["Chromosome", "Start", "End", "p_exon", "Strand"])
+        return pd.DataFrame(columns=["Chromosome", "Start", "End", "p_exon", "confidence", "Strand"])
 
     out_rows = []
 
@@ -266,21 +275,38 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
         p_add, p_rem = {}, {}
         if not p.empty:
             p = p.reset_index(drop=True)
-            for idx, (s, en, psi) in enumerate(zip(p["Start"], p["End"], p["psi"])):
-                s = int(s); en = int(en)
-                p_add.setdefault(s, []).append((idx, float(psi)))
-                p_rem.setdefault(en, []).append((idx, float(psi)))
+            # Check if confidence column exists
+            has_conf = 'confidence' in p.columns
+            if has_conf:
+                for idx, row in p.iterrows():
+                    s = int(row["Start"])
+                    en = int(row["End"])
+                    psi = float(row["psi"])
+                    conf = float(row["confidence"])
+                    p_add.setdefault(s, []).append((idx, psi, conf))
+                    p_rem.setdefault(en, []).append((idx, psi, conf))
+            else:
+                for idx, (s, en, psi) in enumerate(zip(p["Start"], p["End"], p["psi"])):
+                    s = int(s); en = int(en)
+                    p_add.setdefault(s, []).append((idx, float(psi), 0.0))
+                    p_rem.setdefault(en, []).append((idx, float(psi), 0.0))
 
         active_t = 0
         active_e = 0
         active_p_ids = {}
         active_p_sum = 0.0
+        active_c_sum = 0.0
 
         def _p_mean():
             n = len(active_p_ids)
             return (active_p_sum / n) if n else None
+        
+        def _c_mean():
+            n = len(active_p_ids)
+            return (active_c_sum / n) if n else 0.0
 
         prev_label = None
+        prev_conf = None
         prev_start = None
 
         for i in range(len(boundaries) - 1):
@@ -294,38 +320,44 @@ def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=No
             if x in e_add: active_e += e_add[x]
             if x in e_rem: active_e -= e_rem[x]
             if x in p_add:
-                for pid, psi in p_add[x]:
+                for pid, psi, conf in p_add[x]:
                     if pid not in active_p_ids:
-                        active_p_ids[pid] = psi
+                        active_p_ids[pid] = (psi, conf)
                         active_p_sum += psi
+                        active_c_sum += conf
             if x in p_rem:
-                for pid, _psi in p_rem[x]:
+                for pid, _psi, _conf in p_rem[x]:
                     if pid in active_p_ids:
-                        active_p_sum -= active_p_ids.pop(pid)
+                        old_psi, old_conf = active_p_ids.pop(pid)
+                        active_p_sum -= old_psi
+                        active_c_sum -= old_conf
 
             if active_t <= 0:
                 if prev_start is not None:
-                    out_rows.append((chrom, prev_start, x, prev_label, strand))
-                    prev_start, prev_label = None, None
+                    out_rows.append((chrom, prev_start, x, prev_label, prev_conf, strand))
+                    prev_start, prev_label, prev_conf = None, None, None
                 continue
 
             pm = _p_mean()
+            cm = _c_mean()
             label = pm if pm is not None else (1.0 if active_e > 0 else 0.0)
 
             if prev_start is None:
                 prev_start = x
                 prev_label = label
+                prev_conf = cm
             elif label != prev_label:
-                out_rows.append((chrom, prev_start, x, prev_label, strand))
+                out_rows.append((chrom, prev_start, x, prev_label, prev_conf, strand))
                 prev_start = x
                 prev_label = label
+                prev_conf = cm
 
         last_boundary = int(boundaries[-1])
         if prev_start is not None and prev_start < last_boundary:
-            out_rows.append((chrom, prev_start, last_boundary, prev_label, strand))
+            out_rows.append((chrom, prev_start, last_boundary, prev_label, prev_conf, strand))
 
-    out = pd.DataFrame(out_rows, columns=["Chromosome", "Start", "End", "p_exon", "Strand"])
-    return out[["Chromosome", "Start", "End", "p_exon", "Strand"]]
+    out = pd.DataFrame(out_rows, columns=["Chromosome", "Start", "End", "p_exon", "confidence", "Strand"])
+    return out[["Chromosome", "Start", "End", "p_exon", "confidence", "Strand"]]
 
 
 def _load_rmats_common(
@@ -595,11 +627,11 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
     # PSI regions: concat + weighted collapse by junction counts
     vars_list = [gr for gr in (rmats_se, rmats_ri, rmats_a3ss, rmats_a5ss) if len(gr) > 0]
     vars_pr = pr.concat(vars_list) if vars_list else pr.PyRanges()
-    psi_df = pd.DataFrame(columns=['Chromosome','Start','End','Strand','psi'])
+    psi_df = pd.DataFrame(columns=['Chromosome','Start','End','Strand','psi','confidence'])
     if len(vars_pr):
         # Use weighted collapse: sum counts, then recompute PSI
         vars_df = collapse_exon_coords_weighted(vars_pr.df)
-        psi_df = vars_df[['Chromosome','Start','End','Strand','psi']].copy()
+        psi_df = vars_df[['Chromosome','Start','End','Strand','psi','confidence']].copy()
 
     # Transcript and exon space from the dominant-isoform GTF
     gdf = stringtie_gr.df
@@ -618,4 +650,9 @@ def generate_soft_labels(stringtie_gr, rmats_se, rmats_ri=None, rmats_a3ss=None,
 
     # Build disjoint labeled segments with PSI priority
     out = _disjoint_labels_with_priority(transcripts_df, exons_df, psi_df)
+    
+    # Add default confidence for regions without PSI data
+    if 'confidence' not in out.columns:
+        out['confidence'] = 0.0
+    
     return out

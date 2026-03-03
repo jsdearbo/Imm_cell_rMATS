@@ -9,14 +9,14 @@ from generate_splicing_labels import (
 )
 
 DEFAULTS = {
-    "rmats_se": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_only/SE.MATS.JC.txt",
-    "rmats_ri": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_only/RI.MATS.JC.txt",
-    "rmats_a3ss": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_only/A3SS.MATS.JC.txt",
-    "rmats_a5ss": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/rmats/B_only/A5SS.MATS.JC.txt",
-    "gtf": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/stringtie_out/dominant_isoforms/B_Cell_dominant.gtf",
+    "rmats_se": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/SE.MATS.JC.txt",
+    "rmats_ri": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/RI.MATS.JC.txt",
+    "rmats_a3ss": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/A3SS.MATS.JC.txt",
+    "rmats_a5ss": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/A5SS.MATS.JC.txt",
+    "gtf": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/compute_psi/stringtie_out/dominant_isoforms/B_Cell_dominant.gtf",
     "min_coverage": 20,
-    "out_bed": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/hard_and_soft_label_testing/soft_output_test/B_cell_soft_labels.bed",
-    "summary": "/bobross/jdearborn/public_data/ImmGen_Deep_RNAseq/compute_psi/hard_and_soft_label_testing/soft_output_test/B_cell_soft_label_summary.tsv",
+    "out_bed": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/test_soft_labeling_output/B_cell_soft_labels.bed",
+    "summary": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/test_soft_labeling_output/B_cell_soft_label_summary.tsv",
 }
 
 def parse_args():
@@ -59,7 +59,12 @@ def main():
 
     out_path = Path(args.out_bed)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df[['Chromosome', 'Start', 'End', 'p_exon']].to_csv(
+    
+    # Add default confidence if not present
+    if 'confidence' not in df.columns:
+        df['confidence'] = 0.0
+    
+    df[['Chromosome', 'Start', 'End', 'p_exon', 'confidence']].to_csv(
         out_path, sep="\t", header=False, index=False
     )
 
