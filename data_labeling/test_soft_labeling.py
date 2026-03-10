@@ -3,6 +3,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import pyranges as pr
+
+from io_utils import load_label_intervals
 from generate_splicing_labels import (
     load_rmats_se,
     load_rmats_ri,
@@ -13,19 +15,26 @@ from generate_splicing_labels import (
     _disjoint_labels_with_priority,
 )
 
+# ---- Project layout ----
+_PROJECT_ROOT = "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS"
+_RESULTS_ROOT = f"{_PROJECT_ROOT}/results"
+_LABELING_ROOT = f"{_PROJECT_ROOT}/data_labeling"
+
 DEFAULTS = {
-    "rmats_se": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/SE.MATS.JC.txt",
-    "rmats_ri": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/RI.MATS.JC.txt",
-    "rmats_a3ss": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/A3SS.MATS.JC.txt",
-    "rmats_a5ss": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/B_only/A5SS.MATS.JC.txt",
-    "gtf": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/compute_psi/stringtie_out/dominant_isoforms/B_Cell_dominant.gtf",
+    # Single-mode defaults (B_Cell as example)
+    "rmats_se":    f"{_RESULTS_ROOT}/B_only/SE.MATS.JC.txt",
+    "rmats_ri":    f"{_RESULTS_ROOT}/B_only/RI.MATS.JC.txt",
+    "rmats_a3ss":  f"{_RESULTS_ROOT}/B_only/A3SS.MATS.JC.txt",
+    "rmats_a5ss":  f"{_RESULTS_ROOT}/B_only/A5SS.MATS.JC.txt",
+    "gtf":         f"{_RESULTS_ROOT}/stringtie_per_rep/dominant_isoforms/B_Cell_dominant.gtf",
     "min_coverage": 20,
-    "out_bed": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/test_soft_labeling_output/B_cell_soft_labels.bed",
-    "summary": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/test_soft_labeling_output/B_cell_soft_label_summary.tsv",
-    "rmats_root": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results",
-    "gtf_root": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/compute_psi/stringtie_out/dominant_isoforms",
-    "per_sample_out_dir": "/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/outputs_soft_per_sample/soft",
-    "cell_types": "B_Cell,T_Cell,Macrophage",
+    "out_bed":     f"{_LABELING_ROOT}/test_soft_labeling_output/B_cell_soft_labels.bed",
+    "summary":     f"{_LABELING_ROOT}/test_soft_labeling_output/B_cell_soft_label_summary.tsv",
+    # Master-mode defaults
+    "rmats_root":        _RESULTS_ROOT,
+    "gtf_root":          f"{_RESULTS_ROOT}/stringtie_per_rep/dominant_isoforms",
+    "per_sample_out_dir": f"{_LABELING_ROOT}/outputs_soft_per_sample/soft",
+    "cell_types":        "B_Cell,T_Cell,Macrophage",
 }
 
 def parse_args():
@@ -72,37 +81,6 @@ Two modes of operation:
     parser.add_argument("--summary", default=DEFAULTS["summary"], help="Optional TSV summary of counts by label")
     
     return parser.parse_args()
-
-def load_label_intervals(bed_path: str) -> pd.DataFrame:
-    """Load a BED file with PSI and confidence values."""
-    try:
-        df = pd.read_csv(
-            bed_path,
-            sep="\t",
-            names=["Chromosome", "Start", "End", "PSI", "confidence"],
-            dtype={"Chromosome": str},
-        )
-    except Exception as e:
-        print(f"[ERROR] reading {bed_path}: {e}")
-        return pd.DataFrame(columns=["Chromosome", "Start", "End", "PSI", "confidence"])
-
-    # If confidence is all NaN (e.g. file had only 4 cols), fill with 0
-    if "confidence" not in df.columns or df["confidence"].isna().all():
-        df["confidence"] = 0.0
-    
-    # Fill remaining NaNs
-    df["confidence"] = df["confidence"].fillna(0.0)
-
-    df["Start"] = pd.to_numeric(df["Start"], errors="coerce")
-    df["End"] = pd.to_numeric(df["End"], errors="coerce")
-    df = df.dropna(subset=["Start", "End"]).reset_index(drop=True)
-    df["Start"] = df["Start"].astype(int)
-    df["End"] = df["End"].astype(int)
-    df["PSI"] = df["PSI"].astype(float)
-    df["confidence"] = df["confidence"].astype(float)
-    df = df[df["Start"] < df["End"]].reset_index(drop=True)
-    return df
-
 
 def create_master_bed_files(bed_files_by_celltype: dict, out_dir: str):
     """

@@ -9,6 +9,7 @@ def gtf_to_transcripts_tsv(
     gtf_path: str,
     out_tsv: str,
     require_transcript_feature: bool = False,
+    union_out: str = None,
 ):
     """
     Convert a dominant-isoform GTF to a transcripts.tsv file.
@@ -98,6 +99,25 @@ def gtf_to_transcripts_tsv(
 
     print(f"[INFO] Wrote {len(tx)} transcripts to {out_tsv}")
 
+    if union_out is not None:
+        union_path = Path(union_out)
+        union_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if union_path.exists():
+            existing = pd.read_csv(union_path, sep="\t")
+        else:
+            existing = pd.DataFrame(columns=tx.columns)
+
+        combined = (
+            pd.concat([existing, tx], ignore_index=True)
+            .drop_duplicates()
+            .sort_values(tx.columns.tolist())
+            .reset_index(drop=True)
+        )
+
+        combined.to_csv(union_path, sep="\t", index=False)
+        print(f"[INFO] Updated union transcripts TSV at {union_path} ({len(combined)} unique rows)")
+
 
 def parse_args():
     ap = argparse.ArgumentParser(
@@ -110,6 +130,11 @@ def parse_args():
         action="store_true",
         help="Fail if GTF lacks transcript features (no exon fallback)",
     )
+    ap.add_argument(
+        "--union-out",
+        default=None,
+        help="Optional path to write/update the union transcripts TSV across invocations.",
+    )
     return ap.parse_args()
 
 
@@ -119,4 +144,5 @@ if __name__ == "__main__":
         gtf_path=args.gtf,
         out_tsv=args.out,
         require_transcript_feature=args.require_transcript_feature,
+        union_out=args.union_out,
     )

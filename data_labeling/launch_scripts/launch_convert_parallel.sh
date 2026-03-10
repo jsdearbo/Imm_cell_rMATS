@@ -6,9 +6,9 @@ set -euo pipefail
 # --------------------
 PYTHON_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/data_conversion_fast.py"
 GENOME_FASTA="/mnt/data_sda/jdearborn/genomes/mouse/mm10/fasta/GRCm38.primary_assembly.genome.fa"
-MANIFEST="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/outputs_soft_per_sample/soft/manifest.tsv"
-TRANSCRIPTS_ALL="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/stringtie_out/dominant_isoforms/all_celltypes_transcripts.tsv"
-BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/multitask_confidence_event_only_augment_4"
+MANIFEST="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/launch_scripts/manifest.generated.tsv"
+TRANSCRIPTS_ALL="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/stringtie_per_rep/dominant_isoforms/all_celltypes_transcripts.tsv"
+BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/multitask_balanced_fixed"
 
 mkdir -p "${BASE_OUT}"
 cp "${MANIFEST}" "${BASE_OUT}/manifest.tsv"
@@ -34,10 +34,9 @@ run_chrom() {
       --split "${SPLIT}/${CHROM}" \
       --chroms "${CHROM}" \
       --window-bp 524288 \
-      --subset-mode event_only \
+      --subset-mode balanced \
       --shard-size 256 \
       --jitter-bp 16 \
-      --augment-k 4 \
       --shard-prefix "${PREFIX}" > "${BASE_OUT}/log_${CHROM}.txt" 2>&1
       
     echo "[${SPLIT}] Finished ${CHROM}"

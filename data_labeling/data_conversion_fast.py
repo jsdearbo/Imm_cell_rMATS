@@ -13,6 +13,8 @@ try:
 except ImportError as e:
     pysam = None
 
+from io_utils import load_label_intervals, load_transcripts_tsv
+
 logging.basicConfig(level=logging.INFO)
 
 # ----------------------------
@@ -27,53 +29,6 @@ class FastaReader:
 
     def fetch(self, chrom: str, start: int, end: int) -> str:
         return self.fasta.fetch(chrom, start, end)
-
-def load_label_intervals(bed_path: str) -> pd.DataFrame:
-    try:
-        # Try reading with 5 columns first
-        df = pd.read_csv(
-            bed_path,
-            sep="\t",
-            names=["Chromosome", "Start", "End", "PSI", "confidence_value"],
-            dtype={"Chromosome": str},
-        )
-    except Exception as e:
-        logging.error(f"Error reading {bed_path}: {e}")
-        return pd.DataFrame(columns=["Chromosome", "Start", "End", "PSI", "confidence_value"])
-
-    # If confidence_value is all NaN (e.g. file had only 4 cols), fill with 0
-    if df["confidence_value"].isna().all():
-        df["confidence_value"] = 0.0
-    
-    # Fill remaining NaNs (if any mixed rows)
-    df["confidence_value"] = df["confidence_value"].fillna(0.0)
-
-    df["Start"] = pd.to_numeric(df["Start"], errors="coerce")
-    df["End"] = pd.to_numeric(df["End"], errors="coerce")
-    df = df.dropna(subset=["Start", "End"]).reset_index(drop=True)
-    df["Start"] = df["Start"].astype(int)
-    df["End"] = df["End"].astype(int)
-    df["PSI"] = df["PSI"].astype(float)
-    df["confidence_value"] = df["confidence_value"].astype(float)
-    df = df[df["Start"] < df["End"]].reset_index(drop=True)
-    return df
-
-def load_transcripts_tsv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, sep="\t", dtype={"Chromosome": str})
-    
-    # Coerce bad values to NaN then drop
-    df["Start"] = pd.to_numeric(df["Start"], errors="coerce")
-    df["End"] = pd.to_numeric(df["End"], errors="coerce")
-    
-    original_len = len(df)
-    df = df.dropna(subset=["Start", "End"]).reset_index(drop=True)
-    if len(df) < original_len:
-        logging.warning(f"Dropped {original_len - len(df)} transcript rows due to invalid coordinates.")
-
-    df["Start"] = df["Start"].astype(int)
-    df["End"] = df["End"].astype(int)
-    df = df[df["Start"] < df["End"]].reset_index(drop=True)
-    return df
 
 # ----------------------------
 # Windowing (Now with Jitter & Augmentation)
@@ -185,64 +140,6 @@ def one_hot_encode(seq: str) -> np.ndarray:
     return out
 
 # ----------------------------
-# Master BED File Generation
-# ----------------------------
-
-def create_master_bed_files(
-    bed_files_by_celltype: Dict[str, List[str]],
-    out_dir: str
-):
-    """
-    Creates aggregated master BED files for each cell type.
-    Averages PSI and confidence_value across replicates for overlapping intervals.
-    """
-    master_dir = Path(out_dir) / "master_beds"
-    master_dir.mkdir(parents=True, exist_ok=True)
-    
-    logging.info(f"Creating master BED files in {master_dir}")
-    
-    for ct, bed_paths in bed_files_by_celltype.items():
-        logging.info(f"  Processing {ct}: {len(bed_paths)} replicates")
-        
-        # Load all intervals from all replicates
-        all_intervals = []
-        for bpath in bed_paths:
-            df = load_label_intervals(bpath)
-            if df.empty:
-                continue
-            all_intervals.append(df)
-        
-        if not all_intervals:
-            logging.warning(f"  No valid intervals for {ct}, skipping.")
-            continue
-        
-        # Concatenate all intervals
-        combined = pd.concat(all_intervals, ignore_index=True)
-        
-        # Sort by chromosome and position
-        combined = combined.sort_values(["Chromosome", "Start", "End"]).reset_index(drop=True)
-        
-        # Group by exact genomic position and average
-        grouped = combined.groupby(["Chromosome", "Start", "End"], as_index=False).agg({
-            "PSI": "mean",
-            "confidence_value": "mean"
-        })
-        
-        # Write master BED file
-        output_path = master_dir / f"{ct}_master.bed"
-        grouped.to_csv(
-            output_path,
-            sep="\t",
-            header=False,
-            index=False,
-            columns=["Chromosome", "Start", "End", "PSI", "confidence_value"]
-        )
-        
-        logging.info(f"  Wrote {len(grouped)} intervals to {output_path.name}")
-    
-    logging.info("Master BED file generation complete.")
-
-# ----------------------------
 # Sharding & Writing
 # ----------------------------
 
@@ -315,7 +212,7 @@ def write_dataset_shards(
                     group["Start"].values, 
                     group["End"].values, 
                     group["PSI"].values,
-                    group["confidence_value"].values
+                    group["confidence"].values
                 ))
 
     # Window Generation
@@ -439,7 +336,6 @@ def parse_args():
     ap.add_argument("--shard-prefix", type=int, default=0, help="Start numbering shards from here")
     ap.add_argument("--jitter-bp", type=int, default=16, help="Randomly shift window start by +/- this amount.")
     ap.add_argument("--augment-k", type=int, default=1, help="Number of jittered copies to generate per nominal window.")
-    ap.add_argument("--create-master-beds", action="store_true", help="Create master BED files per cell type")
     return ap.parse_args()
 
 def main():
@@ -466,10 +362,6 @@ def main():
     for ct in celltypes:
         logging.info(f"  Index {task_map[ct]:d}: {ct}")
     logging.info(f"="*60 + "\n")
-
-    # Create master BED files for each cell type (if requested)
-    if args.create_master_beds:
-        create_master_bed_files(bed_files, args.out_dir)
 
     write_dataset_shards(
         fasta=fasta, transcript_df=transcript_df, bed_files_by_celltype=bed_files,

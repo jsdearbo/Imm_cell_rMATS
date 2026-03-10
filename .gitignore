@@ -12,3 +12,4 @@ data_labeling/__pycache__/
 # Ignore nohup outputs
 nohup.out
 
+*wandb/
