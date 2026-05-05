@@ -9,17 +9,19 @@ mkdir -p "${OUT_DIR}"
 
 run_panel() {
     local name="$1"
-    local script="$2"
+    shift
     echo ""
     echo "──────────────────────────────────────────"
     echo "  Panel ${name}"
     echo "──────────────────────────────────────────"
-    python3 "${script}"
+    python3 "$@"
 }
 
 run_panel "A — RNA-seq cohort overview"        "${SCRIPT_DIR}/panel_A_cohort.py"
 run_panel "B — StringTie binary skeleton"      "${SCRIPT_DIR}/panel_B_skeleton.py"
-run_panel "C — rMATS PSI integration"          "${SCRIPT_DIR}/panel_C_integration.py"
+
+run_panel "C — rMATS PSI integration (Ptprc)"  "${SCRIPT_DIR}/panel_C_integration.py" ptprc
+run_panel "C — rMATS PSI integration (Pkm)"    "${SCRIPT_DIR}/panel_C_integration.py" pkm
 run_panel "D — Example locus"                  "${SCRIPT_DIR}/panel_D_locus_example.py"
 run_panel "E — PSI label distribution"         "${SCRIPT_DIR}/panel_E_distribution.py"
 run_panel "F — Event counts by class"          "${SCRIPT_DIR}/panel_F_event_counts.py"
