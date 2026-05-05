@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_SCRIPT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/data_labeling/data_conversion.py"
+PYTHON_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/src/data_conversion.py"
 
 # Genome FASTA (indexed with .fai)
 GENOME_FASTA="/mnt/netfiles/genomes/STAR/mm10/GRCm38.primary_assembly.genome.fa"

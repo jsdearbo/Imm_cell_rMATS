@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
 RMATS_FILE="/mnt/netfiles/installations/rmats_turbo_v4_3_0/rmats.py"
 GTF_FILE="/mnt/netfiles/genomes/STAR/mm10/gencode.vM23.annotation.gtf"
 SEQ_TYPE="paired"
@@ -13,9 +16,9 @@ FORCE=0
 groups=()
 
 declare -A GROUP_FILES=(
-  [B]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/B_Cell_bams.txt"
-  [T]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/T_Cell_bams.txt"
-  [Macrophage]="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/txt/Macrophage_bams.txt"
+  [B]="${REPO_ROOT}/config/B_Cell_bams.txt"
+  [T]="${REPO_ROOT}/config/T_Cell_bams.txt"
+  [Macrophage]="${REPO_ROOT}/config/Macrophage_bams.txt"
 )
 
 DEFAULT_GROUPS=(B T Macrophage)

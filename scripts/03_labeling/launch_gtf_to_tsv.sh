@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_DIR="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS"
-PYTHON_SCRIPT="${BASE_DIR}/data_labeling/gtf_to_tsv.py"
+PYTHON_SCRIPT="${BASE_DIR}/src/gtf_to_tsv.py"
 
 B_CELL_GTF="${BASE_DIR}/results/stringtie_per_rep/dominant_isoforms/B_Cell_dominant.gtf"
 B_CELL_TSV="${BASE_DIR}/results/stringtie_per_rep/dominant_isoforms/B_Cell_transcripts.tsv"

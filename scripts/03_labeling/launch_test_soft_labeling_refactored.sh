@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # inputs
-PIPELINE_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/test_soft_labeling.py"
+PIPELINE_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/src/test_soft_labeling.py"
 RMATS_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results"
 GTF_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/stringtie_per_rep/dominant_isoforms"
 
 # outputs
 OUT_DIR="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/PSI_labelled_bed"
 PER_SAMPLE_OUT_DIR="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/PSI_labelled_bed/per_sample"
-MANIFEST_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/launch_scripts/manifest.generated.tsv"
+MANIFEST_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/config/manifest.generated.tsv"
 
 CELL_TYPES="B_Cell,T_Cell,Macrophage"
 

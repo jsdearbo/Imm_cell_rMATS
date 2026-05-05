@@ -2,10 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Script under test (NEW)
-SOFT_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/add_confidence_to_bed.py"
+SOFT_SCRIPT="${PROJECT_ROOT}/src/add_confidence_to_bed.py"
 
 # Input Roots
 RMATS_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results"

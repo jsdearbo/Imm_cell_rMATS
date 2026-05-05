@@ -4,9 +4,12 @@ set -euo pipefail
 # --------------------
 # Configuration
 # --------------------
-PYTHON_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/data_conversion_fast.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+PYTHON_SCRIPT="${REPO_ROOT}/src/data_conversion_fast.py"
 GENOME_FASTA="/mnt/data_sda/jdearborn/genomes/mouse/mm10/fasta/GRCm38.primary_assembly.genome.fa"
-MANIFEST="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/launch_scripts/manifest.generated.tsv"
+MANIFEST="${REPO_ROOT}/config/manifest.generated.tsv"
 TRANSCRIPTS_ALL="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/stringtie_per_rep/dominant_isoforms/all_celltypes_transcripts.tsv"
 BASE_OUT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/data_labeling/results/labelled_data/multitask_balanced_aug4_eonly"
 

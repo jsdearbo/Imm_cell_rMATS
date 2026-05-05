@@ -24,7 +24,8 @@ set -euo pipefail
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="${SCRIPT_DIR}/pipeline_config.sh"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG="${REPO_ROOT}/config/pipeline_config.sh"
 
 if [[ ! -f "${CONFIG}" ]]; then
     echo "[ERROR] Missing config: ${CONFIG}" >&2
