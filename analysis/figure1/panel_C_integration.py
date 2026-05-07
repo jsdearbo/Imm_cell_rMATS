@@ -24,7 +24,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import matplotlib.colors as mcolors
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE      = os.path.join(os.path.dirname(__file__), "../..")
@@ -55,9 +54,6 @@ CELL_COLORS = {
     "Macrophage": "#4DAC26",
     "T Cell":     "#D6604D",
 }
-PSI_CMAP = mcolors.LinearSegmentedColormap.from_list(
-    "psi_bwr", ["#2166AC", "#F7F7F7", "#C0392B"]
-)
 
 # ── Locus definitions ─────────────────────────────────────────────────────────
 LOCI = {
@@ -249,8 +245,8 @@ def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
     # Exon boxes with labels
     for es, ee, enum in exons_with_nums:
         is_hi = (es, ee) in hi_set or any((hs <= es and ee <= he) for hs, he in hi_set)
-        fc = "#D6604D" if is_hi else "#2166AC"
-        ec = "#A93226" if is_hi else "#1A4E7A"
+        fc = "#E8820C" if is_hi else "#888888"
+        ec = "#C06000" if is_hi else "#555555"
         rect = mpatches.FancyBboxPatch(
             (es / 1e3, 0.1), (ee - es) / 1e3, 0.8,
             boxstyle="square,pad=0", facecolor=fc, edgecolor=ec, lw=0.7, zorder=2,
@@ -270,7 +266,7 @@ def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
     ax.tick_params(bottom=False, labelbottom=False)
 
 
-def draw_psi_track(ax, intervals, view_start, view_end):
+def draw_psi_track(ax, intervals, view_start, view_end, color="#2166AC"):
     """Draw PSI labels from master BED intervals."""
     ax.fill_between(
         [view_start / 1e3, view_end / 1e3], [0.02, 0.02], color="#EEEEEE", lw=0, zorder=0
@@ -285,7 +281,7 @@ def draw_psi_track(ax, intervals, view_start, view_end):
         if psi < 0.01:
             c, h = "#CCCCCC", 0.015
         else:
-            c, h = PSI_CMAP(psi), psi
+            c, h = color, psi
         ax.bar(cx, h, width=w, color=c, lw=0, zorder=2)
 
     ax.set_xlim(view_start / 1e3, view_end / 1e3)
@@ -351,37 +347,37 @@ def plot_locus(locus_key):
         print(f"  Highlight {hs:,}–{he:,}: " + "  ".join(f"{ct}={v:.2f}" for ct, v in ct_psi.items()))
 
     # ── Layout: 10 tracks ─────────────────────────────────────────────────────
-    # 0–2: RNA-seq   3: gene model   4–6: skeleton   7–9: PSI labels
-    height_ratios = [0.8, 0.8, 0.8, 0.7, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
+    # 0: gene model   1–3: RNA-seq   4–6: skeleton   7–9: PSI labels
+    height_ratios = [0.7, 0.8, 0.8, 0.8, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
     fig, axes = plt.subplots(
         10, 1,
         figsize=(7, sum(height_ratios) + 0.5),
         sharex=True,
         gridspec_kw={"height_ratios": height_ratios},
     )
-    fig.subplots_adjust(hspace=0.04)
+    fig.subplots_adjust(hspace=0.25)
 
     LPAD = 60  # uniform labelpad for all y-axis labels
 
-    # ── RNA-seq tracks (rows 0–2) ─────────────────────────────────────────────
+    # ── Gene model (row 0) ────────────────────────────────────────────────────
+    draw_gene_model(axes[0], exons, view_start, view_end, strand,
+                    highlight_exons=hi_exons,
+                    exon_labels=locus.get("exon_labels"))
+    axes[0].set_title(f"{gene_name}  ({chrom})", fontsize=9)
+    axes[0].set_ylabel("Gene\nmodel", fontsize=7, rotation=0, labelpad=LPAD, va="center")
+    axes[0].spines["bottom"].set_visible(False)
+    axes[0].tick_params(bottom=False)
+
+    # ── RNA-seq tracks (rows 1–3) ─────────────────────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
-        ax = axes[i]
+        ax = axes[1 + i]
         x_kb, vals = bw_data[ct]
         draw_rna_track(ax, x_kb, vals, CELL_COLORS[ct])
         ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
                       color=CELL_COLORS[ct], fontweight="bold")
         ax.spines["bottom"].set_visible(False)
         ax.tick_params(bottom=False)
-    axes[0].set_title(f"{gene_name}  ({chrom})", fontsize=9)
-    _section_label(axes[0], "RNA-seq")
-
-    # ── Gene model (row 3) ────────────────────────────────────────────────────
-    draw_gene_model(axes[3], exons, view_start, view_end, strand,
-                    highlight_exons=hi_exons,
-                    exon_labels=locus.get("exon_labels"))
-    axes[3].set_ylabel("Gene\nmodel", fontsize=7, rotation=0, labelpad=LPAD, va="center")
-    axes[3].spines["bottom"].set_visible(False)
-    axes[3].tick_params(bottom=False)
+    _section_label(axes[1], "RNA-seq")
 
     # ── Constitutive skeleton tracks (rows 4–6) ───────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
@@ -397,7 +393,7 @@ def plot_locus(locus_key):
     # ── PSI label tracks (rows 7–9) ───────────────────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
         ax = axes[7 + i]
-        draw_psi_track(ax, bed_dict[ct], view_start, view_end)
+        draw_psi_track(ax, bed_dict[ct], view_start, view_end, color=CELL_COLORS[ct])
         ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
                       color=CELL_COLORS[ct], fontweight="bold")
         for (hs, he), ct_psi in psi_annotations.items():
