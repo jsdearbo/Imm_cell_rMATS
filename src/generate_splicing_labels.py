@@ -76,62 +76,61 @@ def _aggregate_exact_duplicates(df):
 
 def collapse_exon_coords_weighted(df):
     """
-    Collapse duplicate exon coordinates by summing junction counts,
-    then recomputing PSI from aggregated counts.
-    
-    This is the CORRECT way to handle multiple rMATS rows with the same
-    cassette exon coords (different flanking contexts). Averaging PSI
-    gives equal weight to rare vs dominant isoforms; summing counts
-    then recomputing PSI gives proper read-weighted aggregation.
+    For duplicate exon coordinates (same cassette exon, different flanking contexts),
+    select the single event with the highest total read count (IJC+SJC pooled across
+    samples) rather than summing all contexts.
+
+    Rationale: summing counts across all flanking contexts inflates PSI for alternatively
+    spliced exons because high-PSI conditional events (e.g., "given adjacent variable exon
+    is present, is this exon included?") swamp the most informative global event (e.g.,
+    "competing against the full-skip isoform"). The highest-count event is typically the
+    most global flanking context and gives the best estimate of the exon's marginal
+    inclusion rate.
     """
     if df.empty:
         return df
-    
+
     df = df.reset_index(drop=True)
-    
-    # Identify per-sample count columns
+
     ijc_cols = [c for c in df.columns if c.startswith("ijc_")]
     sjc_cols = [c for c in df.columns if c.startswith("sjc_")]
-    
+
     if not ijc_cols or not sjc_cols:
-        # Fallback: no per-sample counts available, use old behavior
         return _aggregate_exact_duplicates(df)
-    
+
     assert len(ijc_cols) == len(sjc_cols), "Mismatch between IJC and SJC column counts"
-    
+
     gcols = ["Chromosome", "Start", "End", "Strand"]
-    
-    # Sum counts across contexts for same exon coords
-    agg_dict = {c: 'sum' for c in ijc_cols + sjc_cols}
-    if 'coverage' in df.columns:
-        agg_dict['coverage'] = 'sum'
-    
-    summed = df.groupby(gcols, observed=True, as_index=False).agg(agg_dict)
-    
-    # Recompute per-sample psi_i from summed counts
+
+    # Per-event total reads (pooled across samples) — selection criterion
+    df = df.copy()
+    df["_total_reads"] = df[ijc_cols].sum(axis=1) + df[sjc_cols].sum(axis=1)
+
+    # Keep only the highest-count event per (chr, start, end, strand)
+    idx = df.groupby(gcols, observed=True)["_total_reads"].idxmax()
+    best = df.loc[idx].drop(columns=["_total_reads"]).reset_index(drop=True)
+
+    # Recompute per-sample PSI from the selected event's per-sample counts
     for i in range(len(ijc_cols)):
-        I = summed[f"ijc_{i}"].astype(float)
-        S = summed[f"sjc_{i}"].astype(float)
+        I = best[f"ijc_{i}"].astype(float)
+        S = best[f"sjc_{i}"].astype(float)
         denom = I + S
-        summed[f"psi_{i}"] = np.where(denom > 0, I / denom, np.nan)
+        best[f"psi_{i}"] = np.where(denom > 0, I / denom, np.nan)
 
-    # Compute pooled PSI across samples using summed read depth
-    # (preferred when sample depths differ)
-    total_ijc = summed[ijc_cols].sum(axis=1).astype(float)
-    total_sjc = summed[sjc_cols].sum(axis=1).astype(float)
+    # Pooled PSI across samples (depth-weighted)
+    total_ijc = best[ijc_cols].sum(axis=1).astype(float)
+    total_sjc = best[sjc_cols].sum(axis=1).astype(float)
     pooled_denom = total_ijc + total_sjc
-    summed["psi_pooled"] = np.where(pooled_denom > 0, total_ijc / pooled_denom, np.nan)
+    best["psi_pooled"] = np.where(pooled_denom > 0, total_ijc / pooled_denom, np.nan)
 
-    # Keep mean-of-replicates for diagnostics/backward compatibility,
-    # but default downstream psi to pooled estimate.
-    psi_cols = [c for c in summed.columns if c.startswith("psi_")]
-    summed["psi_mean"] = summed[psi_cols].mean(axis=1, skipna=True)
-    summed["psi"] = summed["psi_pooled"].where(summed["psi_pooled"].notna(), summed["psi_mean"])
+    psi_cols = [c for c in best.columns if c.startswith("psi_") and c != "psi_pooled"]
+    best["psi_mean"] = best[psi_cols].mean(axis=1, skipna=True)
+    best["psi"] = best["psi_pooled"].where(best["psi_pooled"].notna(), best["psi_mean"])
 
-    # Confidence tracks total read support across all samples
-    summed["confidence"] = np.log1p(total_ijc + total_sjc)
-    
-    return summed
+    # Confidence = log read support from the selected (most-informative) event
+    best["confidence"] = np.log1p(total_ijc + total_sjc)
+
+    return best
 
 def _disjoint_labels_with_priority(transcripts_df=None, exons_df=None, psi_df=None, segments_df=None):
     """
