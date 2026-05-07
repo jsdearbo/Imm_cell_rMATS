@@ -118,6 +118,7 @@ for comp in "${comparisons[@]}"; do
     --dpi "${DPI}"
     --y-cap "${Y_CAP}"
     --top-csv "${TOP_CSV}"
+    --min-delta-psi 0.05
   )
   if (( ${COMBINED} == 1 )); then
     cmd+=(--combined)
