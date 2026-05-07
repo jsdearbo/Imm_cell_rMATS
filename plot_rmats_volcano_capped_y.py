@@ -143,13 +143,9 @@ def prep_volcano_df(
     return filtered.assign(logFDR=lambda d: -np.log10(d["FDR"].clip(lower=1e-300)))
 
 
-def annotate_points(
-    ax,
-    labels: pd.DataFrame,
-    avoid_x: np.ndarray | None = None,
-    avoid_y: np.ndarray | None = None,
-) -> None:
+def annotate_points(ax, labels: pd.DataFrame) -> None:
     texts = []
+    data_xy = []
     for _, row in labels.iterrows():
         x_val = row["IncLevelDifference"]
         y_val = row.get("logFDR_capped", row["logFDR"])
@@ -160,19 +156,43 @@ def annotate_points(
             marker="v" if is_capped else "o",
             zorder=4,
         )
-        texts.append(ax.text(x_val, y_val, row["geneSymbol"], fontsize=8))
+        data_xy.append((x_val, y_val))
+        # Nudge all labels up initially so adjustText starts with vertical
+        # clearance; capped labels get a larger nudge into the headroom region.
+        init_y = y_val + (0.5 if is_capped else 0.3)
+        texts.append(ax.text(x_val, init_y, row["geneSymbol"], fontsize=8))
+
     if HAVE_ADJUST and texts:
-        adjust_kwargs: dict = dict(
+        # No arrowprops here — arrows are drawn manually after repositioning
+        # to avoid the FancyArrowPatch fallback that disconnects them from
+        # moved text. force_text is high so close labels fight hard to separate.
+        adjust_text(
+            texts,
             ax=ax,
-            force_text=(0.5, 0.5),
-            force_points=(0.5, 0.5),
-            expand=(1.2, 1.4),
-            arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, shrinkA=5),
+            force_text=(2.0, 2.0),
+            force_points=(0.8, 0.8),
+            expand=(1.5, 1.8),
+            lim=1000,
         )
-        if avoid_x is not None and avoid_y is not None:
-            adjust_kwargs["x"] = avoid_x
-            adjust_kwargs["y"] = avoid_y
-        adjust_text(texts, **adjust_kwargs)
+
+    # Enforce a hard minimum vertical gap so no label sits on the same
+    # y-gridline as its own data point.
+    MIN_VERT_GAP = 0.5
+    for text, (ox, oy) in zip(texts, data_xy):
+        tx, ty = text.get_position()
+        if abs(ty - oy) < MIN_VERT_GAP:
+            text.set_position((tx, oy + MIN_VERT_GAP))
+
+    # Draw connecting lines from each label's final position to its data point.
+    for text, (ox, oy) in zip(texts, data_xy):
+        tx, ty = text.get_position()
+        if (tx - ox) ** 2 + (ty - oy) ** 2 > 0.01:
+            ax.annotate(
+                "", xy=(ox, oy), xytext=(tx, ty),
+                arrowprops=dict(arrowstyle="-", color="gray", lw=0.5,
+                                shrinkA=3, shrinkB=2),
+                annotation_clip=True,
+            )
 
 
 def build_label_set(
@@ -345,11 +365,7 @@ def plot_event(
         )
 
     if not label_df.empty:
-        annotate_points(
-            ax, label_df,
-            avoid_x=plot_df["IncLevelDifference"].values,
-            avoid_y=plot_df["logFDR_capped"].values,
-        )
+        annotate_points(ax, label_df)
 
     if not capped_df.empty:
         ax.legend(loc="upper right", frameon=False, fontsize=8)
