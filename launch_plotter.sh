@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-PLOTTER="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
-RESULT_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results"
+# PLOTTER="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
+PLOTTER="/netfiles/dmlabshare1/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
+# RESULT_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results"
+RESULT_ROOT="/netfiles/dmlabshare1/jsdearbo/scratch/Imm_cell_rMATS/results"
 DEFAULT_COMPARISONS=(
   "B_vs_T"
   "B_vs_Macrophage"
@@ -11,9 +13,12 @@ DEFAULT_COMPARISONS=(
 HIGHLIGHTS=()
 EXCLUDES=()
 TOP_N=10
-OUTPUT_SUBDIR="plots"
+OUTPUT_SUBDIR="plots_capped"
 PREFIX=""
 DPI=160
+Y_CAP=15
+TOP_CSV=50
+COMBINED=0
 FORCE=0
 comparisons=()
 
@@ -50,6 +55,18 @@ while (( $# > 0 )); do
       DPI="$2"
       shift 2
       ;;
+    --top-csv)
+      TOP_CSV="$2"
+      shift 2
+      ;;
+    --combined)
+      COMBINED=1
+      shift
+      ;;
+    --y-cap)
+      Y_CAP="$2"
+      shift 2
+      ;;
     -f|--force)
       FORCE=1
       shift
@@ -63,6 +80,9 @@ while (( $# > 0 )); do
       echo "      --output-subdir <name>  Subdir for plots (default: plots)."
       echo "      --prefix <text>         Filename prefix."
       echo "      --dpi <int>             Figure DPI (default: 160)."
+      echo "      --y-cap <float>          Cap -log10(FDR) for plotting (default: 15)."
+      echo "      --top-csv <int>          Top N rows to write to CSV per plot (default: 50)."
+      echo "      --combined               Also plot combined SE/RI/A3SS/A5SS events."
       echo "  -f, --force                Regenerate plots even if sentinel exists."
       exit 0
       ;;
@@ -96,7 +116,12 @@ for comp in "${comparisons[@]}"; do
     --top-n "${TOP_N}"
     --output-subdir "${OUTPUT_SUBDIR}"
     --dpi "${DPI}"
+    --y-cap "${Y_CAP}"
+    --top-csv "${TOP_CSV}"
   )
+  if (( ${COMBINED} == 1 )); then
+    cmd+=(--combined)
+  fi
   if [[ -n "${PREFIX}" ]]; then
     cmd+=(--prefix "${PREFIX}")
   fi

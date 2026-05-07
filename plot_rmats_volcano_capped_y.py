@@ -25,10 +25,10 @@ except ImportError:
 EVENT_TYPES = ("SE", "RI", "A3SS", "A5SS", "MXE")
 DEFAULT_EXCLUDES = {"Arap1"}
 
-# Cutoff to visually cap the Y-axis. 
-# Any -log10(FDR) > 50 is extremely significant. 
-# Capping it prevents the plot from looking empty.
-Y_AXIS_CAP = 50 
+DEFAULT_Y_CAP = 15
+COMBINED_EVENT_TYPES = ("SE", "RI", "A3SS", "A5SS")
+DEFAULT_COMBINED_NAME = "all_events"
+DEFAULT_TOP_CSV = 50
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -76,6 +76,40 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=160,
         help="Figure DPI for saved images (default: %(default)s).",
     )
+    parser.add_argument(
+        "--y-cap",
+        type=float,
+        default=DEFAULT_Y_CAP,
+        help="Cap -log10(FDR) for plotting (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--top-csv",
+        type=int,
+        default=DEFAULT_TOP_CSV,
+        help="Top N rows to write to CSV per plot (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--combined",
+        action="store_true",
+        help="Also plot combined SE/RI/A3SS/A5SS events.",
+    )
+    parser.add_argument(
+        "--combined-name",
+        default=DEFAULT_COMBINED_NAME,
+        help="Filename label for combined plot outputs (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--min-delta-psi",
+        type=float,
+        default=0.0,
+        help="Minimum |IncLevelDifference| to include in plot (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--sig-fdr",
+        type=float,
+        default=0.05,
+        help="FDR threshold for significance coloring (default: %(default)s).",
+    )
     return parser.parse_args(argv)
 
 
@@ -88,50 +122,42 @@ def load_event_table(path: Path) -> pd.DataFrame | None:
     return df
 
 
-def prep_volcano_df(df: pd.DataFrame, exclude_genes: set[str]) -> pd.DataFrame:
+def prep_volcano_df(
+    df: pd.DataFrame, exclude_genes: set[str], min_delta_psi: float = 0.0
+) -> pd.DataFrame:
     working = df.assign(
         FDR=pd.to_numeric(df.get("FDR"), errors="coerce"),
         IncLevelDifference=pd.to_numeric(df.get("IncLevelDifference"), errors="coerce"),
     )
-    # Remove rows with bad data
     filtered = working.dropna(subset=["FDR", "IncLevelDifference", "geneSymbol"])
-    
+
     if exclude_genes:
         filtered = filtered[~filtered["geneSymbol"].isin(exclude_genes)]
-        
+
+    if min_delta_psi > 0:
+        filtered = filtered[filtered["IncLevelDifference"].abs() >= min_delta_psi]
+
     if filtered.empty:
         return filtered
 
-    # Calculate logFDR, clipping extremely small FDRs to avoid infinity
-    # We clip at 1e-300, but we will handle the visual scaling in the plot function
     return filtered.assign(logFDR=lambda d: -np.log10(d["FDR"].clip(lower=1e-300)))
 
 
 def annotate_points(ax, labels: pd.DataFrame) -> None:
     texts = []
     for _, row in labels.iterrows():
-        # Plot the red dot for highlighted genes
-        ax.scatter(row["IncLevelDifference"], row["logFDR"], color="crimson", s=28, zorder=3)
-        
-        texts.append(
-            ax.annotate(
-                row["geneSymbol"],
-                xy=(row["IncLevelDifference"], row["logFDR"]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=8,
-                arrowprops=dict(arrowstyle="-", color="black", lw=0.4),
-            )
-        )
+        x_val = row["IncLevelDifference"]
+        y_val = row.get("logFDR_capped", row["logFDR"])
+        ax.scatter(x_val, y_val, color="crimson", s=28, zorder=3)
+        texts.append(ax.text(x_val, y_val, row["geneSymbol"], fontsize=8))
     if HAVE_ADJUST and texts:
         adjust_text(
             texts,
             ax=ax,
-            force_points=0.05,
-            force_text=0.05,
-            expand_points=(1.02, 1.02),
-            expand_text=(1.02, 1.02),
-            only_move={"points": "y", "text": "xy"},
+            force_text=(0.5, 0.5),
+            force_points=(0.5, 0.5),
+            expand=(1.2, 1.4),
+            arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, shrinkA=5),
         )
 
 
@@ -141,9 +167,12 @@ def build_label_set(
     highlight_genes: set[str],
 ) -> pd.DataFrame:
     frames = []
-    # Get top N by lowest FDR
     if top_n > 0 and not plot_df.empty:
-        frames.append(plot_df.nsmallest(top_n, "FDR"))
+        ranked = plot_df.assign(_abs_delta=plot_df["IncLevelDifference"].abs())
+        ranked = ranked.sort_values(
+            ["FDR", "_abs_delta"], ascending=[True, False]
+        ).drop(columns="_abs_delta")
+        frames.append(ranked.head(top_n))
     # Get user highlights
     if highlight_genes:
         frames.append(plot_df[plot_df["geneSymbol"].isin(highlight_genes)])
@@ -153,6 +182,29 @@ def build_label_set(
     
     combined = pd.concat(frames, ignore_index=True)
     return combined.drop_duplicates(subset="geneSymbol")
+
+
+def build_combined_table(
+    event_tables: dict[str, pd.DataFrame],
+    event_types: tuple[str, ...],
+) -> pd.DataFrame | None:
+    frames = []
+    for event in event_types:
+        table = event_tables.get(event)
+        if table is None:
+            continue
+        frames.append(table.assign(EventType=event))
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+
+def write_top_csv(plot_df: pd.DataFrame, output_path: Path, top_n: int) -> None:
+    if top_n <= 0 or plot_df.empty:
+        return
+    top_df = plot_df.nsmallest(top_n, "FDR").sort_values("FDR", ascending=True)
+    top_df.to_csv(output_path, index=False)
+    print(f"[ok] wrote {output_path}")
 
 
 def plot_event(
@@ -166,56 +218,109 @@ def plot_event(
     exclude_genes: set[str],
     output_dir: Path,
     prefix: str,
+    y_cap: float | None,
+    top_csv: int,
+    min_delta_psi: float = 0.0,
+    sig_fdr: float = 0.05,
+    title: str | None = None,
+    file_stem: str | None = None,
 ) -> None:
-    plot_df = prep_volcano_df(df, exclude_genes)
+    plot_df = prep_volcano_df(df, exclude_genes, min_delta_psi)
     if plot_df.empty:
         print(f"[skip] {comparison_dir.name} {event_type}: no valid rows after filtering", file=sys.stderr)
         return
 
     label_df = build_label_set(plot_df, top_n, highlight_genes)
 
+    if title is None:
+        title = f"{event_type} events volcano ({comparison_dir.name.replace('_', ' ')})"
+    if file_stem is None:
+        base_prefix = f"{prefix}_" if prefix else ""
+        file_stem = f"{base_prefix}{comparison_dir.name}_{event_type}_volcano"
+
+    if y_cap is not None:
+        plot_df = plot_df.assign(
+            logFDR_capped=lambda d: np.minimum(d["logFDR"], y_cap),
+            is_capped=lambda d: d["logFDR"] > y_cap,
+        )
+        label_df = label_df.assign(
+            logFDR_capped=lambda d: np.minimum(d["logFDR"], y_cap),
+            is_capped=lambda d: d["logFDR"] > y_cap,
+        )
+    else:
+        plot_df = plot_df.assign(logFDR_capped=plot_df["logFDR"], is_capped=False)
+        label_df = label_df.assign(logFDR_capped=label_df["logFDR"], is_capped=False)
+
+    max_log_fdr = plot_df["logFDR"].max()
+
     fig, ax = plt.subplots(figsize=(6, 5))
-    
-    # Plot all points
+
+    sig_mask = plot_df["FDR"] < sig_fdr
+    non_sig = plot_df[~sig_mask]
+    sig = plot_df[sig_mask]
+
     ax.scatter(
-        plot_df["IncLevelDifference"],
-        plot_df["logFDR"],
-        s=12,
-        alpha=0.6,
-        color="steelblue",
-        edgecolor="none",
+        non_sig["IncLevelDifference"], non_sig["logFDR_capped"],
+        s=12, alpha=0.35, color="lightgray", edgecolor="none",
     )
+    ax.scatter(
+        sig["IncLevelDifference"], sig["logFDR_capped"],
+        s=14, alpha=0.7, color="steelblue", edgecolor="none",
+    )
+
+    capped_df = plot_df[plot_df["is_capped"]]
+    if not capped_df.empty:
+        ax.scatter(
+            capped_df["IncLevelDifference"],
+            capped_df["logFDR_capped"],
+            s=18,
+            marker="v",
+            color="black",
+            alpha=0.7,
+            label=f"Capped (n={len(capped_df)})",
+        )
     
     ax.axvline(0, color="gray", lw=1, ls="--")
     
     # --- DYNAMIC SCALING FIX ---
     # Check max logFDR. If it's huge (e.g. > 50), we cap the view
     # so normal points (FDR 0.05 -> 1.3) aren't invisible.
-    max_log_fdr = plot_df["logFDR"].max()
-    if max_log_fdr > Y_AXIS_CAP:
-        # Cap the Y-axis, but make sure we don't hide the top points completely
-        # (Though they will be off the top, or we can just set the limit)
-        # Better approach: Symlog or just set ylim. 
-        # Here we set ylim to Y_AXIS_CAP, but if points are above, we annotate them carefully.
-        # Ideally, we let matplotlib autoscaling handle it unless it's insane.
-        # If the max is 300, we clamp to 50 for better viewing.
-        ax.set_ylim(bottom=-0.5, top=Y_AXIS_CAP)
-        ax.text(0.02, 0.95, f"Note: Y-axis clipped at {Y_AXIS_CAP}\n(Max value: {max_log_fdr:.1f})", 
-                transform=ax.transAxes, fontsize=7, color="red")
+    if y_cap is not None and max_log_fdr > y_cap:
+        label_headroom = max(0.6, y_cap * 0.04)
+        ax.set_ylim(bottom=-0.5, top=y_cap + label_headroom)
     
     ax.set_xlabel("Δ PSI (IncLevelDifference)")
     ax.set_ylabel("-log10(FDR)")
-    ax.set_title(f"{event_type} events volcano ({comparison_dir.name.replace('_', ' ')})")
+    ax.set_title(title, pad=12)
+
+    parts = comparison_dir.name.split("_vs_")
+    if len(parts) == 2:
+        group1, group2 = (p.replace("_", " ") for p in parts)
+        ax.text(
+            0.02, 0.03, f"← Higher in {group2}",
+            transform=ax.transAxes, fontsize=7.5, ha="left", va="bottom",
+            color="dimgray", style="italic",
+        )
+        ax.text(
+            0.98, 0.03, f"Higher in {group1} →",
+            transform=ax.transAxes, fontsize=7.5, ha="right", va="bottom",
+            color="dimgray", style="italic",
+        )
 
     if not label_df.empty:
         annotate_points(ax, label_df)
 
+    if not capped_df.empty:
+        ax.legend(loc="upper right", frameon=False, fontsize=8)
+
     plt.tight_layout()
-    filename = f"{prefix + '_' if prefix else ''}{comparison_dir.name}_{event_type}_volcano.png"
-    output_path = output_dir / filename
+    output_path = output_dir / f"{file_stem}.png"
     fig.savefig(output_path, dpi=dpi)
     plt.close(fig)
     print(f"[ok] wrote {output_path}")
+
+    csv_path = output_dir / f"{file_stem}_top{top_csv}.csv"
+    write_top_csv(plot_df, csv_path, top_csv)
 
 
 def main(argv: list[str]) -> int:
@@ -229,12 +334,14 @@ def main(argv: list[str]) -> int:
             continue
         output_dir = result_dir / args.output_subdir
         output_dir.mkdir(parents=True, exist_ok=True)
+        event_tables: dict[str, pd.DataFrame] = {}
         for event in EVENT_TYPES:
             table_path = result_dir / f"{event}.MATS.JC.txt"
             table = load_event_table(table_path)
             if table is None:
                 print(f"[skip] {table_path} not found or empty", file=sys.stderr)
                 continue
+            event_tables[event] = table
             plot_event(
                 result_dir,
                 event,
@@ -245,6 +352,41 @@ def main(argv: list[str]) -> int:
                 exclude_genes=exclude_genes,
                 output_dir=output_dir,
                 prefix=args.prefix,
+                y_cap=args.y_cap,
+                top_csv=args.top_csv,
+                min_delta_psi=args.min_delta_psi,
+                sig_fdr=args.sig_fdr,
+            )
+        if args.combined:
+            combined_table = build_combined_table(event_tables, COMBINED_EVENT_TYPES)
+            if combined_table is None:
+                print(
+                    f"[skip] {result_dir} combined: no valid rows after filtering",
+                    file=sys.stderr,
+                )
+                continue
+            base_prefix = f"{args.prefix}_" if args.prefix else ""
+            combined_stem = f"{base_prefix}{result_dir.name}_{args.combined_name}_volcano"
+            combined_title = (
+                "All events (SE, RI, A3SS, A5SS) volcano "
+                f"({result_dir.name.replace('_', ' ')})"
+            )
+            plot_event(
+                result_dir,
+                args.combined_name,
+                combined_table,
+                dpi=args.dpi,
+                top_n=args.top_n,
+                highlight_genes=highlight_genes,
+                exclude_genes=exclude_genes,
+                output_dir=output_dir,
+                prefix=args.prefix,
+                y_cap=args.y_cap,
+                top_csv=args.top_csv,
+                min_delta_psi=args.min_delta_psi,
+                sig_fdr=args.sig_fdr,
+                title=combined_title,
+                file_stem=combined_stem,
             )
     return 0
 
