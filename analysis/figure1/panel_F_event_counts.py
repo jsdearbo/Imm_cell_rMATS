@@ -26,7 +26,7 @@ CELL_TYPES = {
     "Macrophage": "Macrophage_only",
 }
 EVENT_TYPES = ["SE", "RI", "A3SS", "A5SS", "MXE"]
-MIN_READS   = 20   # minimum total junction reads (IJC + SJC) per event
+MIN_READS   = 10   # minimum total junction reads (IJC + SJC) per event
 
 COLORS = {
     "B_Cell":     "#2166AC",
