@@ -357,45 +357,35 @@ def plot_locus(locus_key):
     )
     fig.subplots_adjust(hspace=0.25)
 
-    LPAD = 60  # uniform labelpad for all y-axis labels
-
     # ── Gene model (row 0) ────────────────────────────────────────────────────
     draw_gene_model(axes[0], exons, view_start, view_end, strand,
                     highlight_exons=hi_exons,
                     exon_labels=locus.get("exon_labels"))
     axes[0].set_title(f"{gene_name}  ({chrom})", fontsize=9)
-    axes[0].set_ylabel("Gene\nmodel", fontsize=7, rotation=0, labelpad=LPAD, va="center")
     axes[0].spines["bottom"].set_visible(False)
     axes[0].tick_params(bottom=False)
+
 
     # ── RNA-seq tracks (rows 1–3) ─────────────────────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
         ax = axes[1 + i]
         x_kb, vals = bw_data[ct]
         draw_rna_track(ax, x_kb, vals, CELL_COLORS[ct])
-        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
-                      color=CELL_COLORS[ct], fontweight="bold")
         ax.spines["bottom"].set_visible(False)
         ax.tick_params(bottom=False)
-    _section_label(axes[1], "RNA-seq")
 
     # ── Constitutive skeleton tracks (rows 4–6) ───────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
         ax = axes[4 + i]
         draw_skeleton_track(ax, skel_exons[ct], view_start, view_end, CELL_COLORS[ct])
-        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
-                      color=CELL_COLORS[ct], fontweight="bold")
         if i < len(CELL_TYPES) - 1:
             ax.spines["bottom"].set_visible(False)
             ax.tick_params(bottom=False)
-    _section_label(axes[4], "Const. skeleton")
 
     # ── PSI label tracks (rows 7–9) ───────────────────────────────────────────
     for i, ct in enumerate(CELL_TYPES):
         ax = axes[7 + i]
         draw_psi_track(ax, bed_dict[ct], view_start, view_end, color=CELL_COLORS[ct])
-        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
-                      color=CELL_COLORS[ct], fontweight="bold")
         for (hs, he), ct_psi in psi_annotations.items():
             if ct in ct_psi:
                 mid_x = (hs + he) / 2 / 1e3
@@ -405,7 +395,6 @@ def plot_locus(locus_key):
         if i < len(CELL_TYPES) - 1:
             ax.spines["bottom"].set_visible(False)
             ax.tick_params(bottom=False)
-    _section_label(axes[7], "PSI labels")
 
     # ── Highlight spans across all 10 tracks ──────────────────────────────────
     for hs, he in hi_exons:
@@ -419,6 +408,62 @@ def plot_locus(locus_key):
         axes[0].set_xlim(view_start / 1e3, view_end / 1e3)
     axes[-1].set_xlabel(f"Genomic position — {chrom} (kb)", fontsize=8)
     axes[-1].tick_params(axis="x", labelsize=7)
+
+    # ── Section boxes, rotated labels, and legend (figure coordinates) ──────────
+    fig.canvas.draw()
+
+    # Cell-type legend anchored to upper-right of gene model panel
+    p0 = axes[0].get_position()
+    legend_handles = [mpatches.Patch(color=CELL_COLORS[ct], label=ct) for ct in CELL_TYPES]
+    fig.legend(
+        handles=legend_handles, fontsize=6.5, loc="upper right",
+        bbox_to_anchor=(p0.x1, p0.y1 + 0.03),
+        bbox_transform=fig.transFigure,
+        framealpha=0.9, edgecolor="#CCCCCC",
+        ncol=len(CELL_TYPES), handlelength=1.0, handleheight=0.8, borderpad=0.5,
+    )
+
+    sections = [
+        ("RNA-seq",         1, 3),
+        ("Const. skeleton", 4, 6),
+        ("PSI labels",      7, 9),
+    ]
+    label_x_offset = 0.05  # figure-coord distance left of the axes left edge
+    for sec_label, r0, r1 in sections:
+        p_top = axes[r0].get_position()
+        p_bot = axes[r1].get_position()
+        x0 = p_top.x0
+        y0 = p_bot.y0
+        w  = p_top.x1 - p_top.x0
+        h  = p_top.y1 - p_bot.y0
+
+        # add extra headroom for PSI labels
+        if sec_label == "PSI labels":
+            extra = 0.01  # figure coords; tweak as needed
+            y0 -= 0.0
+            h  += extra
+
+        rect = plt.Rectangle(
+            (x0, y0), w, h,
+            transform=fig.transFigure,
+            fill=False, edgecolor="#BBBBBB", linewidth=0.7,
+            clip_on=False,
+        )
+        fig.add_artist(rect)
+        fig.text(
+            x0 - label_x_offset, y0 + h / 2, sec_label,
+            transform=fig.transFigure,
+            rotation=90, va="center", ha="center",
+            fontsize=7, color="#444444",
+        )
+
+    # Gene model label at same x as section labels
+    fig.text(
+        p0.x0 - label_x_offset, p0.y0 + (p0.y1 - p0.y0) / 2, "Gene\nmodel",
+        transform=fig.transFigure,
+        rotation=0, va="center", ha="center",
+        fontsize=7, color="#444444",
+    )
 
     out = os.path.join(OUT_DIR, f"panel_C_{locus_key}.pdf")
     fig.savefig(out, bbox_inches="tight", dpi=300)
