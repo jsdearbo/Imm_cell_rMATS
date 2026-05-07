@@ -1,29 +1,25 @@
 """
 panel_C_integration.py
 
-Figure 1C: rMATS PSI labels across cell types at representative alternatively-spliced loci.
+Figure 1C: RNA-seq coverage + PSI training labels at representative alternatively-spliced loci.
 
-Two example loci, each rendered as a 4-track genome browser (gene model + B Cell + Macrophage + T Cell):
+Two example loci (separate PDFs), each showing 10 tracks on a shared genomic x-axis:
+  Rows 0–2: merged RNA-seq coverage per cell type (bigwig, linear scale)
+  Row  3:   gene model (exon boxes labeled E{n}, intron lines, strand arrows)
+  Rows 4–6: constitutive skeleton — dominant isoform binary labels at 32-bp bins
+  Rows 7–9: PSI-corrected training labels per cell type (master BED intervals)
 
-  panel_C_ptprc.pdf  — Ptprc (CD45) cassette exons, chr1:138112000-128000
-                        B Cell (high PSI) vs Macrophage (very low) shows immune-cell-specific splicing
-
-  panel_C_pkm.pdf    — Pkm (pyruvate kinase) exon 9/10 region, chr9
-                        Macrophage-specific inclusion of exon at 59675028-59675195
-
-PSI track rendering per cell type:
-  - binary skeleton from B_Cell_dominant.gtf (shared reference for all tracks)
-  - SE event bins overwritten with measured mean PSI (colored by PSI colormap)
-  - Constitutive-exon bins: cell-type color at PSI=1
-  - Intron/intergenic bins: gray at PSI=0
+PSI labels come directly from the master BED files — the source used to build the NPZ shards.
 
 Output: figure1_out/panel_C_{ptprc,pkm}.pdf
 """
 
 import os
+import re
 import sys
 import numpy as np
 import pandas as pd
+import pyBigWig
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -31,15 +27,26 @@ import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE = os.path.join(os.path.dirname(__file__), "../..")
-GTF_PATH   = os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/B_Cell_dominant.gtf")
-RMATS_DIRS = {
-    "B Cell":     os.path.join(BASE, "results/B_only"),
-    "Macrophage": os.path.join(BASE, "results/Macrophage_only"),
-    "T Cell":     os.path.join(BASE, "results/T_only"),
+BASE      = os.path.join(os.path.dirname(__file__), "../..")
+GTF_FILES = {
+    "B Cell":     os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/B_Cell_dominant.gtf"),
+    "Macrophage": os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/Macrophage_dominant.gtf"),
+    "T Cell":     os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/T_Cell_dominant.gtf"),
+}
+BED_FILES = {
+    "B Cell":     os.path.join(BASE, "data_labeling/results/PSI_labelled_bed/master_beds/B_Cell_master.bed"),
+    "Macrophage": os.path.join(BASE, "data_labeling/results/PSI_labelled_bed/master_beds/Macrophage_master.bed"),
+    "T Cell":     os.path.join(BASE, "data_labeling/results/PSI_labelled_bed/master_beds/T_Cell_master.bed"),
+}
+BW_FILES = {
+    "B Cell":     os.path.join(BASE, "results/merged_bw/B_Cell_merged.bw"),
+    "Macrophage": os.path.join(BASE, "results/merged_bw/Macrophage_merged.bw"),
+    "T Cell":     os.path.join(BASE, "results/merged_bw/T_Cell_merged.bw"),
 }
 OUT_DIR = os.path.join(os.path.dirname(__file__), "figure1_out")
 os.makedirs(OUT_DIR, exist_ok=True)
+
+BIN_SIZE = 32  # bp per label bin
 
 # ── Visual constants ───────────────────────────────────────────────────────────
 CELL_TYPES = ["B Cell", "Macrophage", "T Cell"]
@@ -51,7 +58,6 @@ CELL_COLORS = {
 PSI_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "psi_bwr", ["#2166AC", "#F7F7F7", "#C0392B"]
 )
-BIN_SIZE = 32
 
 # ── Locus definitions ─────────────────────────────────────────────────────────
 LOCI = {
@@ -60,13 +66,25 @@ LOCI = {
         "gene_name":  "Ptprc",
         "chrom":      "chr1",
         "strand":     "-",
-        "view_start": 138_112_000,
-        "view_end":   138_128_500,
-        # Cassette exons to annotate; PSI varies strongly across cell types
+        # exons 3–9 region + flank (exon 3 at 138126326, exon 9 at 138113564)
+        "view_start": 138_113_300,
+        "view_end":   138_126_526,
+        # Exons 4, 5, 6 are the CD45 variable exons (alt-spliced across cell types)
         "highlight_exons": [
-            (138_117_753, 138_117_894),
-            (138_120_019, 138_120_166),
+            (138_122_456, 138_122_584),   # E4
+            (138_120_020, 138_120_166),   # E5
+            (138_117_754, 138_117_894),   # E6
         ],
+        # Canonical CD45 exon labels (GENCODE vM23 ENSMUST00000183301 numbering)
+        "exon_labels": {
+            (138_126_303, 138_126_326): "E3",
+            (138_122_456, 138_122_584): "E4",
+            (138_120_020, 138_120_166): "E5",
+            (138_117_754, 138_117_894): "E6",
+            (138_116_954, 138_117_025): "E7",
+            (138_115_619, 138_115_642): "E8",
+            (138_113_564, 138_113_779): "E9",
+        },
     },
     "pkm": {
         "label":      "Pkm",
@@ -76,7 +94,7 @@ LOCI = {
         "view_start": 59_673_000,
         "view_end":   59_680_500,
         "highlight_exons": [
-            (59_675_028, 59_675_195),   # Mac-specific exon
+            (59_675_028, 59_675_195),
         ],
     },
 }
@@ -84,8 +102,9 @@ LOCI = {
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
-def parse_gtf_exons(gtf_path, chrom, gene_name, view_start, view_end):
-    exons = []
+def parse_gtf_exons_with_numbers(gtf_path, chrom, gene_name, view_start, view_end):
+    """Return [(start, end, exon_number), ...] for exons within view, sorted by start."""
+    exons = {}
     with open(gtf_path) as fh:
         for line in fh:
             if line.startswith("#"):
@@ -95,76 +114,119 @@ def parse_gtf_exons(gtf_path, chrom, gene_name, view_start, view_end):
                 continue
             if f'gene_name "{gene_name}"' not in parts[8]:
                 continue
+            m = re.search(r'exon_number "(\d+)"', parts[8])
+            enum = int(m.group(1)) if m else 0
             s = max(int(parts[3]), view_start)
             e = min(int(parts[4]), view_end)
             if s < e:
-                exons.append((s, e))
-    return sorted(set(exons))
+                key = (s, e)
+                if key not in exons:
+                    exons[key] = enum
+    return sorted([(s, e, n) for (s, e), n in exons.items()], key=lambda x: x[0])
 
 
-def make_binary_track(exons, view_start, view_end, bin_size=BIN_SIZE):
-    n_bins = (view_end - view_start) // bin_size
-    track = np.zeros(n_bins, dtype=float)
-    for es, ee in exons:
-        b0 = max(0, (es - view_start) // bin_size)
-        b1 = min(n_bins, (ee - view_start + bin_size - 1) // bin_size)
-        track[b0:b1] = 1.0
+def parse_union_gtf_exons(gtf_paths, chrom, gene_name, view_start, view_end):
+    """Union of exons across multiple GTFs — ensures alt-spliced exons appear in gene model."""
+    exons = {}
+    for path in gtf_paths:
+        for s, e, n in parse_gtf_exons_with_numbers(path, chrom, gene_name, view_start, view_end):
+            if (s, e) not in exons:
+                exons[(s, e)] = n
+    return sorted([(s, e, n) for (s, e), n in exons.items()], key=lambda x: x[0])
+
+
+def make_binary_track(exons_flat, view_start, view_end):
+    """Return 0/1 float array at BIN_SIZE resolution covering [view_start, view_end)."""
+    n_bins = (view_end - view_start) // BIN_SIZE
+    track  = np.zeros(n_bins, dtype=float)
+    for es, ee in exons_flat:
+        b_start = max(0, (es - view_start) // BIN_SIZE)
+        b_end   = min(n_bins, (ee - view_start + BIN_SIZE - 1) // BIN_SIZE)
+        track[b_start:b_end] = 1.0
     return track
 
 
-def _mean_psi(s):
-    if pd.isna(s) or s == "NA":
-        return np.nan
-    vals = [float(x) for x in str(s).split(",") if x != "NA"]
-    return float(np.nanmean(vals)) if vals else np.nan
+def load_bed_intervals(bed_path, chrom, view_start, view_end):
+    """Load master BED intervals overlapping the view region. Returns [(start, end, psi), ...]."""
+    df = pd.read_csv(
+        bed_path, sep="\t", header=None,
+        names=["chrom", "start", "end", "psi", "conf"],
+        dtype={"chrom": str, "start": int, "end": int, "psi": float, "conf": float},
+    )
+    df = df[df["chrom"] == chrom]
+    df = df[(df["end"] > view_start) & (df["start"] < view_end)]
+    return [(int(r["start"]), int(r["end"]), float(r["psi"])) for _, r in df.iterrows()]
 
 
-def _sum_reads(s):
-    if pd.isna(s):
-        return 0.0
-    try:
-        return sum(float(x) for x in str(s).split(",") if x not in ("", "NA"))
-    except Exception:
-        return 0.0
+def load_bw_values(bw_path, chrom, start, end):
+    """Query bigwig at 1-bp resolution (linear scale). Returns (x_kb, values)."""
+    bw   = pyBigWig.open(bw_path)
+    vals = np.array(bw.values(chrom, start, end), dtype=float)
+    bw.close()
+    vals = np.nan_to_num(vals, nan=0.0)
+    x_kb = (start + np.arange(len(vals))) / 1e3
+    return x_kb, vals
 
 
-def load_se_events(rmats_dir, chrom, view_start, view_end, min_reads=20):
-    path = os.path.join(rmats_dir, "SE.MATS.JC.txt")
-    if not os.path.exists(path):
-        return []
-    df = pd.read_csv(path, sep="\t")
-    df = df[df["chr"] == chrom].copy()
-    df = df[(df["exonStart_0base"] >= view_start) & (df["exonEnd"] <= view_end)]
-    df["psi"] = df["IncLevel1"].apply(_mean_psi)
-    df["ijc"] = df["IJC_SAMPLE_1"].apply(_sum_reads)
-    df = df.dropna(subset=["psi"])
-    df = df[df["ijc"] >= min_reads]
-    # Keep highest-coverage event per unique exon
-    df = (df.sort_values("ijc", ascending=False)
-            .drop_duplicates(subset=["exonStart_0base", "exonEnd"]))
-    return [(int(r["exonStart_0base"]), int(r["exonEnd"]), float(r["psi"]))
-            for _, r in df.iterrows()]
-
-
-def apply_psi_overwrite(binary_track, se_events, view_start, bin_size=BIN_SIZE):
-    track = binary_track.copy()
-    n_bins = len(track)
-    for es, ee, psi in se_events:
-        b0 = max(0, (es - view_start) // bin_size)
-        b1 = min(n_bins, (ee - view_start + bin_size - 1) // bin_size)
-        track[b0:b1] = psi
-    return track
+def compute_psi_annotations(bed_dict, highlight_exons):
+    """
+    For each highlight exon, compute length-weighted mean PSI per cell type
+    from overlapping BED intervals.
+    Returns {(hs, he): {ct: mean_psi}}.
+    """
+    annots = {}
+    for hs, he in highlight_exons:
+        ct_vals = {}
+        for ct, intervals in bed_dict.items():
+            overlapping = [(s, e, psi) for s, e, psi in intervals if e > hs and s < he]
+            if overlapping:
+                total = sum(min(e, he) - max(s, hs) for s, e, _ in overlapping)
+                if total > 0:
+                    wpsi = sum((min(e, he) - max(s, hs)) * psi for s, e, psi in overlapping)
+                    ct_vals[ct] = wpsi / total
+        if ct_vals:
+            annots[(hs, he)] = ct_vals
+    return annots
 
 
 # ── Drawing helpers ───────────────────────────────────────────────────────────
 
-def draw_gene_model(ax, exons, view_start, view_end, strand,
-                    highlight_exons=(), bin_size=BIN_SIZE):
-    x_lims = (view_start / 1e3, view_end / 1e3)
-    ax.set_xlim(*x_lims)
-    ax.set_ylim(-0.4, 1.5)
-    ax.plot(x_lims, [0.5, 0.5], color="#555555", lw=0.9, zorder=1)
+def draw_rna_track(ax, x_kb, values, color):
+    ax.fill_between(x_kb, values, alpha=0.75, color=color, lw=0, zorder=2)
+    y_max = max(float(values.max()) * 1.1, 0.1)
+    ax.set_ylim(0, y_max)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(labelsize=6)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(2, integer=True))
 
+
+def draw_skeleton_track(ax, exons_with_nums, view_start, view_end, color):
+    """Constitutive binary skeleton at BIN_SIZE resolution. Exon bins = cell color, intron = gray."""
+    exons_flat = [(s, e) for s, e, _ in exons_with_nums]
+    track = make_binary_track(exons_flat, view_start, view_end)
+    n_bins = len(track)
+    x_kb   = view_start / 1e3 + (np.arange(n_bins) + 0.5) * BIN_SIZE / 1e3
+    for xi, val in enumerate(track):
+        c = color if val > 0.5 else "#EEEEEE"
+        ax.bar(x_kb[xi], max(val, 0.015), width=BIN_SIZE / 1e3, color=c, lw=0, zorder=2)
+    ax.set_ylim(-0.05, 1.2)
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["0", "1"], fontsize=6)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(labelsize=6)
+
+
+def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
+                    highlight_exons=(), exon_labels=None):
+    """
+    exon_labels: optional dict {(start, end): "label"} for custom exon labeling.
+    Falls back to GTF exon_number when absent.
+    """
+    ax.set_ylim(-0.4, 1.5)
+    x_lo, x_hi = view_start / 1e3, view_end / 1e3
+    ax.plot([x_lo, x_hi], [0.5, 0.5], color="#555555", lw=0.9, zorder=1)
+
+    # Strand direction arrows
     n_ticks = max(1, (view_end - view_start) // 2000)
     for tp in np.linspace(view_start + 1000, view_end - 1000, n_ticks):
         dx = 400 if strand == "+" else -400
@@ -172,11 +234,21 @@ def draw_gene_model(ax, exons, view_start, view_end, strand,
                     arrowprops=dict(arrowstyle="-|>", color="#AAAAAA",
                                    lw=0.5, mutation_scale=6))
 
-    hi_set = {(es, ee) for es, ee in highlight_exons}
-    for es, ee in exons:
-        is_hi = (es, ee) in hi_set or any(
-            (hs <= es and ee <= he) for hs, he in hi_set
-        )
+    hi_set      = {(es, ee) for es, ee in highlight_exons}
+    exon_coords = [(s, e) for s, e, _ in exons_with_nums]
+
+    # Intron labels between consecutive exons
+    for i in range(len(exon_coords) - 1):
+        _, e1 = exon_coords[i]
+        s2, _ = exon_coords[i + 1]
+        if s2 - e1 > 500:
+            mid = (e1 + s2) / 2 / 1e3
+            ax.text(mid, 0.52, "intron", ha="center", va="bottom",
+                    fontsize=4.5, color="#888888")
+
+    # Exon boxes with labels
+    for es, ee, enum in exons_with_nums:
+        is_hi = (es, ee) in hi_set or any((hs <= es and ee <= he) for hs, he in hi_set)
         fc = "#D6604D" if is_hi else "#2166AC"
         ec = "#A93226" if is_hi else "#1A4E7A"
         rect = mpatches.FancyBboxPatch(
@@ -184,29 +256,37 @@ def draw_gene_model(ax, exons, view_start, view_end, strand,
             boxstyle="square,pad=0", facecolor=fc, edgecolor=ec, lw=0.7, zorder=2,
         )
         ax.add_patch(rect)
+        if exon_labels is not None:
+            label = exon_labels.get((es, ee), "")
+        else:
+            label = f"E{enum}" if enum else ""
+        if label and (ee - es) > 80:
+            ax.text((es + ee) / 2 / 1e3, 0.5, label,
+                    ha="center", va="center", fontsize=5,
+                    color="white", fontweight="bold", zorder=3)
 
     ax.set_yticks([])
     ax.spines[:].set_visible(False)
     ax.tick_params(bottom=False, labelbottom=False)
 
 
-def draw_psi_track(ax, psi_track, binary_track, view_start, view_end,
-                   bin_size=BIN_SIZE, highlight_exons=()):
-    n_bins = len(psi_track)
-    x_kb   = view_start / 1e3 + (np.arange(n_bins) + 0.5) * bin_size / 1e3
-
-    for xi, (xv, psi, binary) in enumerate(zip(x_kb, psi_track, binary_track)):
-        if binary < 0.5 and psi < 0.01:
-            c = "#E8E8E8"   # intron/intergenic
-            h = 0.03        # tiny stub so intron region is visible
-        elif psi < 0.01:
-            c = "#CCCCCC"   # exon bin at PSI~0 (skipped)
-            h = psi if psi > 0 else 0.0
+def draw_psi_track(ax, intervals, view_start, view_end):
+    """Draw PSI labels from master BED intervals."""
+    ax.fill_between(
+        [view_start / 1e3, view_end / 1e3], [0.02, 0.02], color="#EEEEEE", lw=0, zorder=0
+    )
+    for start, end, psi in intervals:
+        s_kb = max(start, view_start) / 1e3
+        e_kb = min(end,   view_end)   / 1e3
+        if s_kb >= e_kb:
+            continue
+        cx  = (s_kb + e_kb) / 2
+        w   = e_kb - s_kb
+        if psi < 0.01:
+            c, h = "#CCCCCC", 0.015
         else:
-            c = PSI_CMAP(psi)
-            h = psi
-        if h > 0:
-            ax.bar(xv, h, width=bin_size / 1e3, color=c, lw=0, zorder=2)
+            c, h = PSI_CMAP(psi), psi
+        ax.bar(cx, h, width=w, color=c, lw=0, zorder=2)
 
     ax.set_xlim(view_start / 1e3, view_end / 1e3)
     ax.set_ylim(-0.05, 1.15)
@@ -216,24 +296,18 @@ def draw_psi_track(ax, psi_track, binary_track, view_start, view_end,
     ax.tick_params(labelsize=6)
 
 
-def annotate_exons(axes_dict, se_events_dict, highlight_exons, view_start):
-    """Add PSI value labels above the highlighted cassette exon(s)."""
-    for hs, he in highlight_exons:
-        mid_x = (hs + he) / 2 / 1e3
-        for ct, ax in axes_dict.items():
-            events = se_events_dict.get(ct, [])
-            for es, ee, psi in events:
-                if abs(es - hs) <= 50 and abs(ee - he) <= 50:
-                    ax.text(mid_x, 1.08, f"{psi:.2f}",
-                            ha="center", va="bottom", fontsize=6,
-                            color=CELL_COLORS[ct], fontweight="bold")
-                    break
+def _section_label(ax, text):
+    """Add a bold section header inside the top-left of an axes."""
+    ax.text(0.01, 0.93, text, transform=ax.transAxes,
+            fontsize=6.5, fontweight="bold", color="#333333",
+            ha="left", va="top", clip_on=True,
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1))
 
 
 # ── Main plot function ────────────────────────────────────────────────────────
 
 def plot_locus(locus_key):
-    locus = LOCI[locus_key]
+    locus      = LOCI[locus_key]
     chrom      = locus["chrom"]
     gene_name  = locus["gene_name"]
     strand     = locus["strand"]
@@ -241,70 +315,114 @@ def plot_locus(locus_key):
     view_end   = locus["view_end"]
     hi_exons   = locus.get("highlight_exons", [])
 
-    print(f"\n── {locus['label']} ({chrom}:{view_start}-{view_end}) ──")
+    print(f"\n── {locus['label']} ({chrom}:{view_start:,}–{view_end:,}) ──")
 
-    exons  = parse_gtf_exons(GTF_PATH, chrom, gene_name, view_start, view_end)
-    binary = make_binary_track(exons, view_start, view_end)
-    print(f"  GTF exons in view: {len(exons)}")
+    # ── Load data ─────────────────────────────────────────────────────────────
+    # Gene model uses union of all cell-type dominant isoforms so alt-spliced exons appear
+    exons = parse_union_gtf_exons(
+        list(GTF_FILES.values()), chrom, gene_name, view_start, view_end
+    )
+    print(f"  GTF exons in view (gene model, union): {len(exons)}")
 
-    psi_tracks   = {}
-    se_events_by = {}
+    skel_exons = {}
     for ct in CELL_TYPES:
-        evts = load_se_events(RMATS_DIRS[ct], chrom, view_start, view_end)
-        se_events_by[ct] = evts
-        psi_tracks[ct] = apply_psi_overwrite(binary, evts, view_start)
-        psi_vals = [psi for _, _, psi in evts]
-        print(f"  {ct}: {len(evts)} SE events  PSI range {min(psi_vals):.2f}-{max(psi_vals):.2f}"
-              if psi_vals else f"  {ct}: 0 SE events")
+        skel_exons[ct] = parse_gtf_exons_with_numbers(
+            GTF_FILES[ct], chrom, gene_name, view_start, view_end
+        )
+        print(f"  {ct} skeleton exons: {len(skel_exons[ct])}")
 
-    # ── Layout ────────────────────────────────────────────────────────────────
-    n_tracks = 1 + len(CELL_TYPES)
+    bed_dict = {}
+    for ct in CELL_TYPES:
+        intervals = load_bed_intervals(BED_FILES[ct], chrom, view_start, view_end)
+        bed_dict[ct] = intervals
+        psi_vals = [p for _, _, p in intervals]
+        if psi_vals:
+            print(f"  {ct}: {len(intervals)} BED intervals  PSI {min(psi_vals):.2f}–{max(psi_vals):.2f}")
+        else:
+            print(f"  {ct}: 0 BED intervals in view")
+
+    bw_data = {}
+    for ct in CELL_TYPES:
+        print(f"  Loading bigwig for {ct}...")
+        bw_data[ct] = load_bw_values(BW_FILES[ct], chrom, view_start, view_end)
+
+    psi_annotations = compute_psi_annotations(bed_dict, hi_exons)
+    for (hs, he), ct_psi in psi_annotations.items():
+        print(f"  Highlight {hs:,}–{he:,}: " + "  ".join(f"{ct}={v:.2f}" for ct, v in ct_psi.items()))
+
+    # ── Layout: 10 tracks ─────────────────────────────────────────────────────
+    # 0–2: RNA-seq   3: gene model   4–6: skeleton   7–9: PSI labels
+    height_ratios = [0.8, 0.8, 0.8, 0.7, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
     fig, axes = plt.subplots(
-        n_tracks, 1, figsize=(7, 1.4 * n_tracks + 0.3),
+        10, 1,
+        figsize=(7, sum(height_ratios) + 0.5),
         sharex=True,
-        gridspec_kw={"height_ratios": [0.9] + [1.0] * len(CELL_TYPES)},
+        gridspec_kw={"height_ratios": height_ratios},
     )
     fig.subplots_adjust(hspace=0.04)
 
-    # ── Gene model ────────────────────────────────────────────────────────────
-    draw_gene_model(axes[0], exons, view_start, view_end, strand,
-                    highlight_exons=hi_exons)
-    axes[0].set_title(
-        f"{gene_name} — PSI labels by cell type  ({chrom})", fontsize=9
-    )
-    axes[0].set_ylabel("Gene\nmodel", fontsize=7, rotation=0, labelpad=46, va="center")
+    LPAD = 60  # uniform labelpad for all y-axis labels
 
-    # ── PSI tracks ────────────────────────────────────────────────────────────
-    ct_axes = {}
-    for ti, ct in enumerate(CELL_TYPES):
-        ax = axes[ti + 1]
-        ct_axes[ct] = ax
-        draw_psi_track(ax, psi_tracks[ct], binary,
-                       view_start, view_end, highlight_exons=hi_exons)
-        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=46, va="center",
+    # ── RNA-seq tracks (rows 0–2) ─────────────────────────────────────────────
+    for i, ct in enumerate(CELL_TYPES):
+        ax = axes[i]
+        x_kb, vals = bw_data[ct]
+        draw_rna_track(ax, x_kb, vals, CELL_COLORS[ct])
+        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
                       color=CELL_COLORS[ct], fontweight="bold")
-        if ti < len(CELL_TYPES) - 1:
+        ax.spines["bottom"].set_visible(False)
+        ax.tick_params(bottom=False)
+    axes[0].set_title(f"{gene_name}  ({chrom})", fontsize=9)
+    _section_label(axes[0], "RNA-seq")
+
+    # ── Gene model (row 3) ────────────────────────────────────────────────────
+    draw_gene_model(axes[3], exons, view_start, view_end, strand,
+                    highlight_exons=hi_exons,
+                    exon_labels=locus.get("exon_labels"))
+    axes[3].set_ylabel("Gene\nmodel", fontsize=7, rotation=0, labelpad=LPAD, va="center")
+    axes[3].spines["bottom"].set_visible(False)
+    axes[3].tick_params(bottom=False)
+
+    # ── Constitutive skeleton tracks (rows 4–6) ───────────────────────────────
+    for i, ct in enumerate(CELL_TYPES):
+        ax = axes[4 + i]
+        draw_skeleton_track(ax, skel_exons[ct], view_start, view_end, CELL_COLORS[ct])
+        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
+                      color=CELL_COLORS[ct], fontweight="bold")
+        if i < len(CELL_TYPES) - 1:
             ax.spines["bottom"].set_visible(False)
             ax.tick_params(bottom=False)
+    _section_label(axes[4], "Const. skeleton")
 
-    annotate_exons(ct_axes, se_events_by, hi_exons, view_start)
+    # ── PSI label tracks (rows 7–9) ───────────────────────────────────────────
+    for i, ct in enumerate(CELL_TYPES):
+        ax = axes[7 + i]
+        draw_psi_track(ax, bed_dict[ct], view_start, view_end)
+        ax.set_ylabel(ct, fontsize=7, rotation=0, labelpad=LPAD, va="center",
+                      color=CELL_COLORS[ct], fontweight="bold")
+        for (hs, he), ct_psi in psi_annotations.items():
+            if ct in ct_psi:
+                mid_x = (hs + he) / 2 / 1e3
+                ax.text(mid_x, 1.08, f"{ct_psi[ct]:.2f}",
+                        ha="center", va="bottom", fontsize=6,
+                        color=CELL_COLORS[ct], fontweight="bold")
+        if i < len(CELL_TYPES) - 1:
+            ax.spines["bottom"].set_visible(False)
+            ax.tick_params(bottom=False)
+    _section_label(axes[7], "PSI labels")
 
-    # Highlight cassette exon spans with vertical shading on all tracks
+    # ── Highlight spans across all 10 tracks ──────────────────────────────────
     for hs, he in hi_exons:
         for ax in axes:
             ax.axvspan(hs / 1e3, he / 1e3, color="#FFE0B2", alpha=0.30, zorder=0)
 
-    # ── x-axis ────────────────────────────────────────────────────────────────
+    # ── x-axis (RNA orientation: flip for minus-strand genes) ─────────────────
+    if strand == "-":
+        axes[0].set_xlim(view_end / 1e3, view_start / 1e3)
+    else:
+        axes[0].set_xlim(view_start / 1e3, view_end / 1e3)
     axes[-1].set_xlabel(f"Genomic position — {chrom} (kb)", fontsize=8)
     axes[-1].tick_params(axis="x", labelsize=7)
-
-    # ── PSI colorbar ──────────────────────────────────────────────────────────
-    sm = plt.cm.ScalarMappable(cmap=PSI_CMAP, norm=mcolors.Normalize(0, 1))
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes[1:], orientation="vertical",
-                        fraction=0.012, pad=0.01, shrink=0.8)
-    cbar.set_label("PSI", fontsize=7)
-    cbar.ax.tick_params(labelsize=6)
 
     out = os.path.join(OUT_DIR, f"panel_C_{locus_key}.pdf")
     fig.savefig(out, bbox_inches="tight", dpi=300)
