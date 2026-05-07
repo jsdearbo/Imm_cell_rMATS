@@ -143,7 +143,12 @@ def prep_volcano_df(
     return filtered.assign(logFDR=lambda d: -np.log10(d["FDR"].clip(lower=1e-300)))
 
 
-def annotate_points(ax, labels: pd.DataFrame) -> None:
+def annotate_points(
+    ax,
+    labels: pd.DataFrame,
+    avoid_x: np.ndarray | None = None,
+    avoid_y: np.ndarray | None = None,
+) -> None:
     texts = []
     for _, row in labels.iterrows():
         x_val = row["IncLevelDifference"]
@@ -157,14 +162,17 @@ def annotate_points(ax, labels: pd.DataFrame) -> None:
         )
         texts.append(ax.text(x_val, y_val, row["geneSymbol"], fontsize=8))
     if HAVE_ADJUST and texts:
-        adjust_text(
-            texts,
+        adjust_kwargs: dict = dict(
             ax=ax,
             force_text=(0.5, 0.5),
             force_points=(0.5, 0.5),
             expand=(1.2, 1.4),
             arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, shrinkA=5),
         )
+        if avoid_x is not None and avoid_y is not None:
+            adjust_kwargs["x"] = avoid_x
+            adjust_kwargs["y"] = avoid_y
+        adjust_text(texts, **adjust_kwargs)
 
 
 def build_label_set(
@@ -307,9 +315,17 @@ def plot_event(
     )
 
     if y_cap is not None and max_log_fdr > y_cap:
-        label_headroom = max(0.6, y_cap * 0.04)
+        n_capped_labels = int(label_df["is_capped"].sum()) if not label_df.empty else 0
+        label_headroom = max(2.0, 0.4 * max(n_capped_labels, 4))
         ax.set_ylim(bottom=-0.5, top=y_cap + label_headroom)
-    
+        # Remove ticks in the headroom region; mark the cap tick as ≥{y_cap}
+        step = 5 if y_cap >= 10 else 2
+        ticks = list(np.arange(0, y_cap + 0.001, step))
+        ax.set_yticks(ticks)
+        ax.set_yticklabels([
+            f"≥{int(t)}" if t == y_cap else str(int(t)) for t in ticks
+        ])
+
     ax.set_xlabel("Δ PSI (IncLevelDifference)")
     ax.set_ylabel("-log10(FDR)")
     ax.set_title(title, pad=12)
@@ -329,10 +345,14 @@ def plot_event(
         )
 
     if not label_df.empty:
-        annotate_points(ax, label_df)
+        annotate_points(
+            ax, label_df,
+            avoid_x=plot_df["IncLevelDifference"].values,
+            avoid_y=plot_df["logFDR_capped"].values,
+        )
 
     if not capped_df.empty:
-        ax.legend(loc="upper right", bbox_to_anchor=(0.99, 0.88), frameon=False, fontsize=8)
+        ax.legend(loc="upper right", frameon=False, fontsize=8)
 
     plt.tight_layout()
     output_path = output_dir / f"{file_stem}.png"
