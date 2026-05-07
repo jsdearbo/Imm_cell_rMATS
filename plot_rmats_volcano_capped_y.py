@@ -143,7 +143,7 @@ def prep_volcano_df(
     return filtered.assign(logFDR=lambda d: -np.log10(d["FDR"].clip(lower=1e-300)))
 
 
-def annotate_points(ax, labels: pd.DataFrame) -> None:
+def annotate_points(ax, labels: pd.DataFrame, avoid_artists: list | None = None) -> None:
     texts = []
     data_xy = []
     for _, row in labels.iterrows():
@@ -163,16 +163,19 @@ def annotate_points(ax, labels: pd.DataFrame) -> None:
         texts.append(ax.text(x_val, init_y, row["geneSymbol"], fontsize=8))
 
     if HAVE_ADJUST and texts:
-        # No arrowprops here — arrows are drawn manually after repositioning
-        # to avoid the FancyArrowPatch fallback that disconnects them from
-        # moved text. force_text is high so close labels fight hard to separate.
+        # No arrowprops — arrows drawn manually after repositioning to avoid
+        # the FancyArrowPatch fallback. force_static/iter_lim are the correct
+        # v1.3 parameter names (force_points/lim are silently ignored in v1.3).
+        if avoid_artists:
+            ax.get_figure().canvas.draw()  # force layout so bboxes are valid
         adjust_text(
             texts,
             ax=ax,
             force_text=(2.0, 2.0),
-            force_points=(0.8, 0.8),
+            force_static=(0.8, 0.8),
             expand=(1.5, 1.8),
-            lim=1000,
+            iter_lim=1000,
+            objects=avoid_artists or [],
         )
 
     # Enforce a hard minimum vertical gap so no label sits on the same
@@ -364,11 +367,12 @@ def plot_event(
             color="dimgray", style="italic",
         )
 
-    if not label_df.empty:
-        annotate_points(ax, label_df)
-
+    legend = None
     if not capped_df.empty:
-        ax.legend(loc="upper right", frameon=False, fontsize=8)
+        legend = ax.legend(loc="upper right", frameon=False, fontsize=8)
+
+    if not label_df.empty:
+        annotate_points(ax, label_df, avoid_artists=[legend] if legend else None)
 
     plt.tight_layout()
     output_path = output_dir / f"{file_stem}.png"
