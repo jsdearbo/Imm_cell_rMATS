@@ -148,7 +148,13 @@ def annotate_points(ax, labels: pd.DataFrame) -> None:
     for _, row in labels.iterrows():
         x_val = row["IncLevelDifference"]
         y_val = row.get("logFDR_capped", row["logFDR"])
-        ax.scatter(x_val, y_val, color="crimson", s=28, zorder=3)
+        is_capped = bool(row.get("is_capped", False))
+        ax.scatter(
+            x_val, y_val, color="crimson",
+            s=35 if is_capped else 28,
+            marker="v" if is_capped else "o",
+            zorder=4,
+        )
         texts.append(ax.text(x_val, y_val, row["geneSymbol"], fontsize=8))
     if HAVE_ADJUST and texts:
         adjust_text(
@@ -168,18 +174,19 @@ def build_label_set(
 ) -> pd.DataFrame:
     frames = []
     if top_n > 0 and not plot_df.empty:
-        ranked = plot_df.assign(_abs_delta=plot_df["IncLevelDifference"].abs())
-        ranked = ranked.sort_values(
-            ["FDR", "_abs_delta"], ascending=[True, False]
-        ).drop(columns="_abs_delta")
+        ranked = (
+            plot_df.assign(_abs_delta=plot_df["IncLevelDifference"].abs())
+            .sort_values(["FDR", "_abs_delta"], ascending=[True, False])
+            .drop_duplicates(subset="geneSymbol")  # deduplicate first so top-N is always N unique genes
+            .drop(columns="_abs_delta")
+        )
         frames.append(ranked.head(top_n))
-    # Get user highlights
     if highlight_genes:
         frames.append(plot_df[plot_df["geneSymbol"].isin(highlight_genes)])
-    
+
     if not frames:
         return pd.DataFrame(columns=plot_df.columns)
-    
+
     combined = pd.concat(frames, ignore_index=True)
     return combined.drop_duplicates(subset="geneSymbol")
 
@@ -281,10 +288,24 @@ def plot_event(
         )
     
     ax.axvline(0, color="gray", lw=1, ls="--")
-    
-    # --- DYNAMIC SCALING FIX ---
-    # Check max logFDR. If it's huge (e.g. > 50), we cap the view
-    # so normal points (FDR 0.05 -> 1.3) aren't invisible.
+
+    if min_delta_psi > 0:
+        for sign in (-1, 1):
+            ax.axvline(sign * min_delta_psi, color="dimgray", lw=0.8, ls=":", zorder=1)
+        ax.text(
+            min_delta_psi, 0.03, f"|ΔPSI|≥{min_delta_psi}",
+            transform=ax.get_xaxis_transform(),
+            va="bottom", ha="left", fontsize=7, color="dimgray",
+        )
+
+    sig_y = -np.log10(sig_fdr)
+    ax.axhline(sig_y, color="dimgray", lw=0.8, ls=":", zorder=1)
+    ax.text(
+        0.01, sig_y, f"FDR={sig_fdr}",
+        transform=ax.get_yaxis_transform(),
+        va="bottom", ha="left", fontsize=7, color="dimgray",
+    )
+
     if y_cap is not None and max_log_fdr > y_cap:
         label_headroom = max(0.6, y_cap * 0.04)
         ax.set_ylim(bottom=-0.5, top=y_cap + label_headroom)
@@ -311,7 +332,7 @@ def plot_event(
         annotate_points(ax, label_df)
 
     if not capped_df.empty:
-        ax.legend(loc="upper right", frameon=False, fontsize=8)
+        ax.legend(loc="upper right", bbox_to_anchor=(0.99, 0.88), frameon=False, fontsize=8)
 
     plt.tight_layout()
     output_path = output_dir / f"{file_stem}.png"
@@ -357,14 +378,13 @@ def main(argv: list[str]) -> int:
                 min_delta_psi=args.min_delta_psi,
                 sig_fdr=args.sig_fdr,
             )
-        if args.combined:
-            combined_table = build_combined_table(event_tables, COMBINED_EVENT_TYPES)
-            if combined_table is None:
-                print(
-                    f"[skip] {result_dir} combined: no valid rows after filtering",
-                    file=sys.stderr,
-                )
-                continue
+        combined_table = build_combined_table(event_tables, COMBINED_EVENT_TYPES)
+        if combined_table is None:
+            print(
+                f"[skip] {result_dir} combined: no valid rows after filtering",
+                file=sys.stderr,
+            )
+        else:
             base_prefix = f"{args.prefix}_" if args.prefix else ""
             combined_stem = f"{base_prefix}{result_dir.name}_{args.combined_name}_volcano"
             combined_title = (
