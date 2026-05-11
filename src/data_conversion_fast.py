@@ -8,6 +8,11 @@ import logging
 import numpy as np
 import pandas as pd
 
+# Minimum per-replicate read support (IJC + SJC) required for an rMATS-derived PSI
+# estimate to contribute to the equal-weight mean. Skeleton positions (confidence==0.0,
+# meaning no rMATS event — pure dominant-isoform label) are always included regardless.
+MIN_READS_PER_REPLICATE = 10
+
 try:
     import pysam
 except ImportError as e:
@@ -260,10 +265,14 @@ def write_dataset_shards(
                 )
                 
                 if np.any(events > 0):
-                    rep_mask = (events > 0).astype(np.float32)
-                    accum_targets += targ 
-                    accum_confidence += conf
-                    accum_mask += rep_mask
+                    reads = np.expm1(conf)
+                    is_skeleton = (conf == 0.0)
+                    rep_mask = (
+                        (events > 0) & (is_skeleton | (reads >= MIN_READS_PER_REPLICATE))
+                    ).astype(np.float32)
+                    accum_targets    += targ * rep_mask
+                    accum_confidence += conf * rep_mask
+                    accum_mask       += rep_mask
 
             with np.errstate(divide='ignore', invalid='ignore'):
                 y[:, task_idx] = np.divide(accum_targets, accum_mask)

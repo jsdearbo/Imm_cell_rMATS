@@ -1,0 +1,66 @@
+Checking 7 BAM files...
+----------------------------------------
+[OK] SRR7988747.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  133.4 bp
+[OK] SRR7988759.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  127.0 bp
+[OK] SRR7988771.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  133.8 bp
+[OK] SRR14714583.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  144.8 bp
+[OK] SRR14714587.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  145.2 bp
+[OK] SRR25288008.bam
+     - Read Length (Mode): 59 bp
+     - Read Length (Avg):  57.8 bp
+[OK] SRR25288009.bam
+     - Read Length (Mode): 59 bp
+     - Read Length (Avg):  57.9 bp
+Checking 6 BAM files...
+----------------------------------------
+[OK] SRR17143398.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  136.2 bp
+[OK] SRR17143399.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  136.4 bp
+[OK] SRR25152365.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  149.9 bp
+[OK] SRR25152366.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  149.8 bp
+[OK] SRR25469902.bam
+     - Read Length (Mode): 76 bp
+     - Read Length (Avg):  75.8 bp
+[OK] SRR25469903.bam
+     - Read Length (Mode): 76 bp
+     - Read Length (Avg):  75.8 bp
+Checking 7 BAM files...
+----------------------------------------
+[OK] SRR14049271.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  150.1 bp
+[OK] SRR14049272.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  150.3 bp
+[OK] SRR14049273.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  150.1 bp
+[OK] SRR15402174.bam
+     - Read Length (Mode): 150 bp
+     - Read Length (Avg):  147.3 bp
+[OK] SRR15402175.bam
+     - Read Length (Mode): 150 bp
+     - Read Length (Avg):  147.3 bp
+[OK] SRR31668386.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  150.5 bp
+[OK] SRR31668387.bam
+     - Read Length (Mode): 151 bp
+     - Read Length (Avg):  150.4 bp

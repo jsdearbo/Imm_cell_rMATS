@@ -4,6 +4,11 @@ import pandas as pd
 import numpy as np
 import pyranges as pr
 
+# Per-replicate minimum read support (IJC + SJC) for an rMATS-derived PSI to be
+# included in the equal-weight mean. Matches the threshold in data_conversion_fast.py.
+# Skeleton positions (confidence==0.0) are always included.
+MIN_READS_PER_REPLICATE = 10
+
 from io_utils import load_label_intervals
 from generate_splicing_labels import (
     load_rmats_se,
@@ -124,22 +129,18 @@ def create_master_bed_files(bed_files_by_celltype: dict, out_dir: str):
         # Sort by chromosome and position
         combined = combined.sort_values(["Chromosome", "Start", "End"]).reset_index(drop=True)
 
-        # Derive read-depth proxy from confidence (confidence = log1p(depth))
-        combined["depth"] = np.expm1(combined["confidence"].clip(lower=0.0)).astype(float)
-        combined["weighted_psi"] = combined["PSI"].astype(float) * combined["depth"]
-
-        grouped = combined.groupby(["Chromosome", "Start", "End"], as_index=False).agg(
-            psi_num=("weighted_psi", "sum"),
-            depth_sum=("depth", "sum"),
-            psi_mean=("PSI", "mean"),
+        # Filter per-replicate entries: skeleton positions (confidence==0.0) always pass;
+        # rMATS-derived positions require >= MIN_READS_PER_REPLICATE reads.
+        combined["reads"] = np.expm1(combined["confidence"].clip(lower=0.0)).astype(float)
+        combined["_valid"] = (
+            (combined["confidence"] == 0.0) | (combined["reads"] >= MIN_READS_PER_REPLICATE)
         )
+        valid = combined[combined["_valid"]].copy()
 
-        grouped["PSI"] = np.where(
-            grouped["depth_sum"] > 0,
-            grouped["psi_num"] / grouped["depth_sum"],
-            grouped["psi_mean"],
+        grouped = valid.groupby(["Chromosome", "Start", "End"], as_index=False).agg(
+            PSI=("PSI", "mean"),
+            confidence=("confidence", "mean"),
         )
-        grouped["confidence"] = np.log1p(grouped["depth_sum"]).astype(float)
         grouped = grouped[["Chromosome", "Start", "End", "PSI", "confidence"]]
         
         # Write master BED file

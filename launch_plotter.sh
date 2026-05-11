@@ -2,9 +2,11 @@
 set -euo pipefail
 
 # PLOTTER="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
-PLOTTER="/netfiles/dmlabshare1/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
+# PLOTTER="/netfiles/dmlabshare1/jsdearbo/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
+PLOTTER="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/plot_rmats_volcano_capped_y.py"
 # RESULT_ROOT="/mnt/netfiles/jsdearbo/scratch/Imm_cell_rMATS/results"
 RESULT_ROOT="/netfiles/dmlabshare1/jsdearbo/scratch/Imm_cell_rMATS/results"
+RESULT_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results_all_bams"
 DEFAULT_COMPARISONS=(
   "B_vs_T"
   "B_vs_Macrophage"
