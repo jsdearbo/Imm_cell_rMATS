@@ -30,7 +30,7 @@ GTF_TO_TSV_SCRIPT="${SRC_ROOT}/gtf_to_tsv.py"
 TRANSCRIPTS_ALL="${DOMINANT_GTF_DIR}/all_celltypes_transcripts.tsv"
 
 # ---- Step 2: Soft labeling (rMATS PSI -> BED) ----
-SOFT_LABEL_SCRIPT="${SRC_ROOT}/test_soft_labeling.py"
+SOFT_LABEL_SCRIPT="${SRC_ROOT}/label_splicing_events.py"
 RMATS_ROOT="${RESULTS_ROOT}"
 GTF_ROOT="${DOMINANT_GTF_DIR}"
 SOFT_LABEL_OUT_DIR="${DATA_ROOT}/results/PSI_labelled_bed"
@@ -49,6 +49,10 @@ SUBSET_MODE="balanced"
 CHROMS_TRAIN="chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chrX chrY"
 CHROMS_VAL="chr10"
 CHROMS_TEST="chr11"
+
+# ---- Step 4: Single-cell NPZ extraction ----
+FILTER_SCRIPT="${SRC_ROOT}/filter_npz_by_celltype.py"
+SINGLE_CELL_OUT_DIR="${DATA_ROOT}/results/labelled_data/single_cell_type_datasets/multitask_balanced"
 
 # ---- Parallelism ----
 MAX_PARALLEL_CHROMS=5

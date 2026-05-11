@@ -17,7 +17,7 @@ RNA-seq BAM files
  Dominant isoform selection           Event tables (SE, A5SS, A3SS, RI, MXE)
       │                                     │
       ▼                                     ▼
- Transcripts TSV                      Per-sample PSI BED files
+ Transcripts TSV                      Per-sample PSI BED files (soft labels)
       │                                     │
       └──────────────────┬──────────────────┘
                          │
@@ -25,11 +25,15 @@ RNA-seq BAM files
               Master BED aggregation (per cell type)
                          │
                          ▼
-              NPZ shard conversion
-              (sequence + PSI + mask, binned at 32 bp)
+              Multitask NPZ shard conversion
+              (sequence + PSI + mask, binned at 32 bp, 3 cell-type tasks)
                          │
                          ▼
               train / val / test NPZ shards
+                         │
+                         ▼
+              Single-cell NPZ extraction
+              (one task column per cell type)
 ```
 
 ## Repository Structure
@@ -47,17 +51,15 @@ RNA-seq BAM files
 │   ├── io_utils.py                   # Shared BED/TSV loaders
 │   ├── gtf_to_tsv.py                 # Step 1 – GTF → transcript TSV
 │   ├── generate_splicing_labels.py   # Core PSI labeling logic
-│   ├── test_soft_labeling.py         # Step 2 – rMATS PSI → per-sample BEDs + master BEDs
+│   ├── label_splicing_events.py      # Step 2 – rMATS PSI → per-sample BEDs + master BEDs
 │   ├── add_confidence_to_bed.py      # Confidence score assignment
 │   ├── emit_soft_labels_per_sample.py
 │   ├── create_master_beds.py         # Aggregate replicates → master BED per cell type
 │   ├── make_manifest.py              # Build/update BED manifest TSV
 │   ├── dominant_isoform_labler.py    # Select dominant isoform from StringTie GTF
-│   ├── data_conversion_fast.py       # Step 3 – BED + FASTA → NPZ shards (primary)
-│   ├── data_conversion.py            # Older sequential conversion (reference)
-│   ├── validation_tool.py
-│   ├── gut_check_script.py
-│   └── test_hard_labeling.py
+│   ├── data_conversion_fast.py       # Step 3 – BED + FASTA → NPZ shards
+│   ├── filter_npz_by_celltype.py     # Step 4 – Extract single cell type from multitask NPZ
+│   └── validation_tool.py
 │
 ├── scripts/                    # Shell pipeline launchers
 │   ├── run_full_pipeline.sh    # Top-level orchestrator (Steps 1–3)
@@ -71,7 +73,7 @@ RNA-seq BAM files
 │   │   ├── stringtie_annotation_parallel.sh
 │   │   └── stringtie_per_replicate.sh
 │   ├── 03_labeling/            # Step 2 – PSI labeling
-│   │   ├── launch_test_soft_labeling_refactored.sh  # Main labeling launcher
+│   │   ├── launch_label_splicing_events.sh  # Main labeling launcher
 │   │   ├── launch_gtf_to_tsv.sh
 │   │   ├── launch_emit_soft_per_sample.sh
 │   │   ├── launch_add_confidence_to_bed.sh
@@ -79,10 +81,11 @@ RNA-seq BAM files
 │   │   ├── launch_data_conversion.sh
 │   │   ├── launch_data_conversion_test.sh
 │   │   └── launch_debug_data_conversion.sh
-│   └── 04_dataset/             # Step 3 – NPZ shard generation
-│       ├── launch_convert_parallel.sh
+│   └── 04_dataset/             # Steps 3–4 – NPZ shard generation
+│       ├── launch_convert_parallel.sh          # Step 3 – multitask NPZ
 │       ├── launch_convert_parallel_aug4_eonly.sh
-│       └── launch_convert_parallel_aug8.sh
+│       ├── launch_convert_parallel_aug8.sh
+│       └── make_single_cell_type.sh            # Step 4 – single-cell NPZ extraction
 │
 ├── analysis/                   # Visualization and QC
 │   ├── check_bams.py
@@ -118,8 +121,13 @@ bash scripts/02_annotation/launch_merge_stringtie.sh
 bash scripts/run_full_pipeline.sh
 # or step-by-step:
 bash scripts/run_full_pipeline.sh --only 1   # GTF → TSV
-bash scripts/run_full_pipeline.sh --only 2   # rMATS PSI → BEDs
-bash scripts/run_full_pipeline.sh --only 3   # BEDs + FASTA → NPZ shards
+bash scripts/run_full_pipeline.sh --only 2   # rMATS PSI → BEDs (soft labels)
+bash scripts/run_full_pipeline.sh --only 3   # BEDs + FASTA → multitask NPZ shards
+```
+
+**5. Extract single-cell-type NPZ datasets** (run after Step 3):
+```bash
+bash scripts/04_dataset/make_single_cell_type.sh
 ```
 
 ## Output Format

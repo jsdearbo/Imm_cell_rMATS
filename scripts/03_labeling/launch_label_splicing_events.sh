@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # inputs
-PIPELINE_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/src/test_soft_labeling.py"
+PIPELINE_SCRIPT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/src/label_splicing_events.py"
 RMATS_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results"
 GTF_ROOT="/mnt/data_sda/jdearborn/scratch/Imm_cell_rMATS/results/stringtie_per_rep/dominant_isoforms"
 
