@@ -26,7 +26,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE      = os.path.join(os.path.dirname(__file__), "../..")
+BASE         = os.path.join(os.path.dirname(__file__), "../..")
+REFERENCE_GTF = "/mnt/data_sda/jdearborn/genomes/mouse/mm10/gtf/gencode.vM23.annotation.gtf"
 GTF_FILES = {
     "B Cell":     os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/B_Cell_dominant.gtf"),
     "Macrophage": os.path.join(BASE, "results/stringtie_per_rep/dominant_isoforms/Macrophage_dominant.gtf"),
@@ -82,6 +83,25 @@ LOCI = {
             (138_113_564, 138_113_779): "E9",
         },
     },
+    "ptprc_cassette": {
+        "label":      "Ptprc (cassette exons)",
+        "gene_name":  "Ptprc",
+        "chrom":      "chr1",
+        "strand":     "-",
+        # E4 end + 200 bp flank → E6 start − 200 bp flank
+        "view_start": 138_117_554,
+        "view_end":   138_122_784,
+        "highlight_exons": [
+            (138_122_456, 138_122_584),   # E4
+            (138_120_020, 138_120_166),   # E5
+            (138_117_754, 138_117_894),   # E6
+        ],
+        "exon_labels": {
+            (138_122_456, 138_122_584): "E4",
+            (138_120_020, 138_120_166): "E5",
+            (138_117_754, 138_117_894): "E6",
+        },
+    },
     "pkm": {
         "label":      "Pkm",
         "gene_name":  "Pkm",
@@ -91,6 +111,47 @@ LOCI = {
         "view_end":   59_680_500,
         "highlight_exons": [
             (59_675_028, 59_675_195),
+        ],
+    },
+    "actb": {
+        "label":      "Actb",
+        "gene_name":  "Actb",
+        "chrom":      "chr5",
+        "strand":     "-",
+        "view_start": 142_902_800,
+        "view_end":   142_907_100,
+        "highlight_exons": [],
+    },
+    "cfb": {
+        "label":      "Cfb",
+        "gene_name":  "Cfb",
+        "chrom":      "chr17",
+        "strand":     "-",
+        "view_start": 34_856_100,
+        "view_end":   34_862_800,
+        "highlight_exons": [],
+    },
+    "sept4": {
+        "label":           "Sept4",
+        "gene_name":       "Sept4",
+        "chrom":           "chr11",
+        "strand":          "+",
+        "view_start":      87_566_500,
+        "view_end":        87_591_000,
+        "highlight_exons": [],
+        # Sept4 is not in the dominant-isoform StringTie GTFs; use reference annotation for gene model
+        "gene_model_gtfs": [REFERENCE_GTF],
+    },
+    "srsf5": {
+        "label":      "Srsf5",
+        "gene_name":  "Srsf5",
+        "chrom":      "chr12",
+        "strand":     "+",
+        "view_start": 80_945_200,
+        "view_end":   80_950_800,
+        # Region 80947865–80949094: PSI B Cell ~0.79, Macrophage ~0.55, T Cell ~0.23
+        "highlight_exons": [
+            (80_947_865, 80_949_094),
         ],
     },
 }
@@ -201,10 +262,20 @@ def draw_skeleton_track(ax, exons_with_nums, view_start, view_end, color):
     exons_flat = [(s, e) for s, e, _ in exons_with_nums]
     track = make_binary_track(exons_flat, view_start, view_end)
     n_bins = len(track)
-    x_kb   = view_start / 1e3 + (np.arange(n_bins) + 0.5) * BIN_SIZE / 1e3
-    for xi, val in enumerate(track):
-        c = color if val > 0.5 else "#EEEEEE"
-        ax.bar(x_kb[xi], max(val, 0.015), width=BIN_SIZE / 1e3, color=c, lw=0, zorder=2)
+    # Merge contiguous runs into single bars — prevents hairline gaps between adjacent bins in PDF
+    i = 0
+    while i < n_bins:
+        val = track[i]
+        j = i + 1
+        while j < n_bins and track[j] == val:
+            j += 1
+        run_start_kb = (view_start + i * BIN_SIZE) / 1e3
+        run_end_kb   = (view_start + j * BIN_SIZE) / 1e3
+        cx = (run_start_kb + run_end_kb) / 2
+        w  = run_end_kb - run_start_kb
+        c  = color if val > 0.5 else "#EEEEEE"
+        ax.bar(cx, max(val, 0.015), width=w, color=c, lw=0, zorder=2)
+        i = j
     ax.set_ylim(-0.05, 1.2)
     ax.set_yticks([0, 1])
     ax.set_yticklabels(["0", "1"], fontsize=6)
@@ -267,24 +338,33 @@ def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
 
 
 def draw_psi_track(ax, intervals, view_start, view_end, color="#2166AC"):
-    """Draw PSI labels from master BED intervals."""
-    ax.fill_between(
-        [view_start / 1e3, view_end / 1e3], [0.02, 0.02], color="#EEEEEE", lw=0, zorder=0
-    )
-    for start, end, psi in intervals:
-        s_kb = max(start, view_start) / 1e3
-        e_kb = min(end,   view_end)   / 1e3
-        if s_kb >= e_kb:
-            continue
-        cx  = (s_kb + e_kb) / 2
-        w   = e_kb - s_kb
-        if psi < 0.01:
-            c, h = "#CCCCCC", 0.015
-        else:
-            c, h = color, psi
-        ax.bar(cx, h, width=w, color=c, lw=0, zorder=2)
+    """Draw PSI labels from master BED intervals — rasterised to BIN_SIZE to avoid hairlines."""
+    n_bins    = (view_end - view_start) // BIN_SIZE
+    psi_arr   = np.full(n_bins, np.nan)
+    has_label = np.zeros(n_bins, dtype=bool)
 
-    ax.set_xlim(view_start / 1e3, view_end / 1e3)
+    for start, end, psi in intervals:
+        b0 = max(0,      (start - view_start) // BIN_SIZE)
+        b1 = min(n_bins, (end   - view_start + BIN_SIZE - 1) // BIN_SIZE)
+        if b0 >= b1:
+            continue
+        psi_arr[b0:b1]   = psi
+        has_label[b0:b1] = True
+
+    # Step-function edges (length n_bins+1) for fill_between(step='post')
+    x_edges = view_start / 1e3 + np.arange(n_bins + 1) * BIN_SIZE / 1e3
+
+    ax.fill_between([view_start / 1e3, view_end / 1e3], [0.02, 0.02],
+                    color="#EEEEEE", lw=0, zorder=0)
+
+    h_color = np.where(has_label & (psi_arr >= 0.01), psi_arr, 0.0)
+    h_gray  = np.where(has_label & (psi_arr <  0.01), 0.015,   0.0)
+
+    ax.fill_between(x_edges, np.append(h_color, 0.0),
+                    step='post', color=color,     lw=0, zorder=2)
+    ax.fill_between(x_edges, np.append(h_gray,  0.0),
+                    step='post', color='#CCCCCC', lw=0, zorder=2)
+
     ax.set_ylim(-0.05, 1.15)
     ax.set_yticks([0, 0.5, 1])
     ax.set_yticklabels(["0", "", "1"], fontsize=6)
@@ -314,10 +394,19 @@ def plot_locus(locus_key):
     print(f"\n── {locus['label']} ({chrom}:{view_start:,}–{view_end:,}) ──")
 
     # ── Load data ─────────────────────────────────────────────────────────────
-    # Gene model uses union of all cell-type dominant isoforms so alt-spliced exons appear
+    # Gene model uses union of all cell-type dominant isoforms so alt-spliced exons appear.
+    # A locus can override with gene_model_gtfs (e.g. reference annotation for genes not in StringTie output).
+    gene_model_gtf_paths = locus.get("gene_model_gtfs", list(GTF_FILES.values()))
     exons = parse_union_gtf_exons(
-        list(GTF_FILES.values()), chrom, gene_name, view_start, view_end
+        gene_model_gtf_paths, chrom, gene_name, view_start, view_end
     )
+    # For minus-strand genes without custom exon_labels, StringTie numbers exons in
+    # genomic order (1 = lowest coord = 3′ end), which looks backwards on an inverted
+    # axis.  Renumber so that E1 is always the 5′-most exon.
+    if strand == "-" and "exon_labels" not in locus:
+        n = len(exons)
+        exons = [(s, e, n - i) for i, (s, e, _) in enumerate(exons)]
+
     print(f"  GTF exons in view (gene model, union): {len(exons)}")
 
     skel_exons = {}
@@ -356,6 +445,14 @@ def plot_locus(locus_key):
         gridspec_kw={"height_ratios": height_ratios},
     )
     fig.subplots_adjust(hspace=0.25)
+    # Disable x-autoscaling on every axis immediately so that fill_between / bar / plot
+    # calls never override the explicit xlim we set at the end.
+    for ax in axes:
+        ax.autoscale(enable=False, axis="x")
+    # Seed a sensible initial xlim (DNA orientation) so drawing functions that query
+    # the axis limits have a valid range before the final flip is applied.
+    for ax in axes:
+        ax.set_xlim(view_start / 1e3, view_end / 1e3)
 
     # ── Gene model (row 0) ────────────────────────────────────────────────────
     draw_gene_model(axes[0], exons, view_start, view_end, strand,
@@ -402,10 +499,9 @@ def plot_locus(locus_key):
             ax.axvspan(hs / 1e3, he / 1e3, color="#FFE0B2", alpha=0.30, zorder=0)
 
     # ── x-axis (RNA orientation: flip for minus-strand genes) ─────────────────
-    if strand == "-":
-        axes[0].set_xlim(view_end / 1e3, view_start / 1e3)
-    else:
-        axes[0].set_xlim(view_start / 1e3, view_end / 1e3)
+    x_lo, x_hi = (view_end / 1e3, view_start / 1e3) if strand == "-" else (view_start / 1e3, view_end / 1e3)
+    for ax in axes:
+        ax.set_xlim(x_lo, x_hi)
     axes[-1].set_xlabel(f"Genomic position — {chrom} (kb)", fontsize=8)
     axes[-1].tick_params(axis="x", labelsize=7)
 
@@ -424,9 +520,9 @@ def plot_locus(locus_key):
     )
 
     sections = [
-        ("RNA-seq",         1, 3),
-        ("Const. skeleton", 4, 6),
-        ("PSI labels",      7, 9),
+        ("RNA-seq",                        1, 3),
+        ("Binary labels",                  4, 6),
+        ("Percent Spliced-In (PSI) labels", 7, 9),
     ]
     label_x_offset = 0.05  # figure-coord distance left of the axes left edge
     for sec_label, r0, r1 in sections:
