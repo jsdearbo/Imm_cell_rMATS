@@ -19,6 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+import figstyle
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SHARD_DIR = os.path.join(
@@ -70,16 +71,21 @@ def category_fractions(vals):
 
 
 def plot(psi_per_ct):
+    figstyle.apply(compact=True)
     fig, axes = plt.subplots(
         1, 4,
-        figsize=(10.5, 3.0),
+        figsize=(10.5, 3.4),
         gridspec_kw={"width_ratios": [1, 1, 1, 0.85]},
     )
     fig.subplots_adjust(wspace=0.38)
 
-    bins        = np.linspace(0, 1, 61)
+    # PSI values cluster on multiples of 1/32 (label-averaging resolution), so
+    # 60 arbitrary equal-width bins alias against that grid: some bins land on
+    # a mass point, neighboring bins fall in the gap, producing an alternating
+    # high/low "zebra stripe" artifact. Centering 32 bins on k/32 removes it.
+    bins        = np.clip((np.arange(33) - 0.5) / 32, 0, 1)
     bin_centers = (bins[:-1] + bins[1:]) / 2
-    bin_w       = bins[1] - bins[0]
+    bin_w       = np.diff(bins)
 
     cat_data = {}   # collected for the stacked bar panel
 
@@ -103,9 +109,8 @@ def plot(psi_per_ct):
         ax.set_yscale("log")
         ax.set_xlim(0, 1)
         ax.set_ylim(1e-5, 1)
-        ax.set_xlabel("PSI", fontsize=8)
-        ax.set_title(ct, fontsize=8.5, color=color, fontweight="bold")
-        ax.tick_params(labelsize=7)
+        ax.set_xlabel("PSI")
+        ax.set_title(ct, color=color, fontweight="bold")
         ax.spines[["top", "right"]].set_visible(False)
         ax.yaxis.grid(True, lw=0.4, alpha=0.35, zorder=0, which="both")
         ax.set_axisbelow(True)
@@ -113,7 +118,7 @@ def plot(psi_per_ct):
         lo_f, mid_f, hi_f = category_fractions(vals)
         cat_data[ct] = (lo_f, mid_f, hi_f)
 
-    axes[0].set_ylabel("Fraction of labeled bins", fontsize=8)
+    axes[0].set_ylabel("Fraction of labeled bins")
     axes[1].set_yticklabels([])
     axes[2].set_yticklabels([])
 
@@ -137,16 +142,15 @@ def plot(psi_per_ct):
         for xi, (bot, v) in enumerate(zip(bottoms, vals_cat)):
             if v >= 3.0:
                 ax.text(xi, bot + v / 2, f"{v:.1f}%",
-                        ha="center", va="center", fontsize=6.5,
+                        ha="center", va="center", fontsize=figstyle.ANNOT_XS,
                         color="white", fontweight="bold")
         bottoms += vals_cat
 
     ax.set_xticks(x)
-    ax.set_xticklabels([ct.replace(" ", "\n") for ct in ct_labels], fontsize=7)
-    ax.set_ylabel("% of labeled bins", fontsize=8)
+    ax.set_xticklabels([ct.replace(" ", "\n") for ct in ct_labels])
+    ax.set_ylabel("% of labeled bins")
     ax.set_ylim(0, 102)
-    ax.set_title("PSI breakdown", fontsize=8.5, fontweight="bold")
-    ax.tick_params(labelsize=7)
+    ax.set_title("PSI breakdown", fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
     ax.yaxis.grid(True, lw=0.4, alpha=0.35, zorder=0)
     ax.set_axisbelow(True)
@@ -157,13 +161,12 @@ def plot(psi_per_ct):
         Patch(color=CAT_COLORS["regulated"], label=f"PSI {LO}–{HI}  (regulated)"),
         Patch(color=CAT_COLORS["included"],  label=f"PSI > {HI}  (included)"),
     ]
-    fig.legend(handles=legend_handles, fontsize=6.5,
+    fig.legend(handles=legend_handles,
                loc="lower center", ncol=3,
                bbox_to_anchor=(0.5, -0.08),
                framealpha=0.9, edgecolor="#CCCCCC")
 
-    fig.suptitle("Genome-wide PSI label distribution (mask == 1 bins only)",
-                 fontsize=9, y=1.02)
+    fig.suptitle("Genome-wide PSI label distribution", y=1.02)
 
     out = os.path.join(OUT_DIR, "panel_E_distribution.pdf")
     fig.savefig(out, bbox_inches="tight", dpi=300)

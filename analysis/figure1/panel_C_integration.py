@@ -24,6 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import figstyle
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = os.path.join(os.path.dirname(__file__), "../..")
@@ -253,7 +254,6 @@ def draw_rna_track(ax, x_kb, values, color):
     y_max = max(float(values.max()) * 1.1, 0.1)
     ax.set_ylim(0, y_max)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.tick_params(labelsize=6)
     ax.yaxis.set_major_locator(plt.MaxNLocator(2, integer=True))
 
 
@@ -278,9 +278,8 @@ def draw_skeleton_track(ax, exons_with_nums, view_start, view_end, color):
         i = j
     ax.set_ylim(-0.05, 1.2)
     ax.set_yticks([0, 1])
-    ax.set_yticklabels(["0", "1"], fontsize=6)
+    ax.set_yticklabels(["0", "1"])
     ax.spines[["top", "right"]].set_visible(False)
-    ax.tick_params(labelsize=6)
 
 
 def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
@@ -311,7 +310,7 @@ def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
         if s2 - e1 > 500:
             mid = (e1 + s2) / 2 / 1e3
             ax.text(mid, 0.52, "intron", ha="center", va="bottom",
-                    fontsize=4.5, color="#888888")
+                    fontsize=figstyle.ANNOT_XS, color="#888888")
 
     # Exon boxes with labels
     for es, ee, enum in exons_with_nums:
@@ -329,7 +328,7 @@ def draw_gene_model(ax, exons_with_nums, view_start, view_end, strand,
             label = f"E{enum}" if enum else ""
         if label and (ee - es) > 80:
             ax.text((es + ee) / 2 / 1e3, 0.5, label,
-                    ha="center", va="center", fontsize=5,
+                    ha="center", va="center", fontsize=figstyle.ANNOT_XS,
                     color="white", fontweight="bold", zorder=3)
 
     ax.set_yticks([])
@@ -367,15 +366,14 @@ def draw_psi_track(ax, intervals, view_start, view_end, color="#2166AC"):
 
     ax.set_ylim(-0.05, 1.15)
     ax.set_yticks([0, 0.5, 1])
-    ax.set_yticklabels(["0", "", "1"], fontsize=6)
+    ax.set_yticklabels(["0", "", "1"])
     ax.spines[["top", "right"]].set_visible(False)
-    ax.tick_params(labelsize=6)
 
 
 def _section_label(ax, text):
     """Add a bold section header inside the top-left of an axes."""
     ax.text(0.01, 0.93, text, transform=ax.transAxes,
-            fontsize=6.5, fontweight="bold", color="#333333",
+            fontsize=figstyle.ANNOT_SM, fontweight="bold", color="#333333",
             ha="left", va="top", clip_on=True,
             bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1))
 
@@ -383,6 +381,7 @@ def _section_label(ax, text):
 # ── Main plot function ────────────────────────────────────────────────────────
 
 def plot_locus(locus_key):
+    figstyle.apply(compact=True)
     locus      = LOCI[locus_key]
     chrom      = locus["chrom"]
     gene_name  = locus["gene_name"]
@@ -458,7 +457,7 @@ def plot_locus(locus_key):
     draw_gene_model(axes[0], exons, view_start, view_end, strand,
                     highlight_exons=hi_exons,
                     exon_labels=locus.get("exon_labels"))
-    axes[0].set_title(f"{gene_name}  ({chrom})", fontsize=9)
+    axes[0].set_title(f"{gene_name}  ({chrom})", loc="left")
     axes[0].spines["bottom"].set_visible(False)
     axes[0].tick_params(bottom=False)
 
@@ -487,7 +486,7 @@ def plot_locus(locus_key):
             if ct in ct_psi:
                 mid_x = (hs + he) / 2 / 1e3
                 ax.text(mid_x, 1.08, f"{ct_psi[ct]:.2f}",
-                        ha="center", va="bottom", fontsize=6,
+                        ha="center", va="bottom", fontsize=figstyle.ANNOT_SM,
                         color=CELL_COLORS[ct], fontweight="bold")
         if i < len(CELL_TYPES) - 1:
             ax.spines["bottom"].set_visible(False)
@@ -502,8 +501,7 @@ def plot_locus(locus_key):
     x_lo, x_hi = (view_end / 1e3, view_start / 1e3) if strand == "-" else (view_start / 1e3, view_end / 1e3)
     for ax in axes:
         ax.set_xlim(x_lo, x_hi)
-    axes[-1].set_xlabel(f"Genomic position — {chrom} (kb)", fontsize=8)
-    axes[-1].tick_params(axis="x", labelsize=7)
+    axes[-1].set_xlabel(f"Genomic position — {chrom} (kb)")
 
     # ── Section boxes, rotated labels, and legend (figure coordinates) ──────────
     fig.canvas.draw()
@@ -512,7 +510,7 @@ def plot_locus(locus_key):
     p0 = axes[0].get_position()
     legend_handles = [mpatches.Patch(color=CELL_COLORS[ct], label=ct) for ct in CELL_TYPES]
     fig.legend(
-        handles=legend_handles, fontsize=6.5, loc="upper right",
+        handles=legend_handles, loc="upper right",
         bbox_to_anchor=(p0.x1, p0.y1 + 0.03),
         bbox_transform=fig.transFigure,
         framealpha=0.9, edgecolor="#CCCCCC",
@@ -524,7 +522,8 @@ def plot_locus(locus_key):
         ("Binary labels",                  4, 6),
         ("Percent Spliced-In (PSI) labels", 7, 9),
     ]
-    label_x_offset = 0.05  # figure-coord distance left of the axes left edge
+    label_x_offset = 0.085  # figure-coord distance left of the axes left edge
+                            # (clears the wider y-tick numbers at the larger font scale)
     for sec_label, r0, r1 in sections:
         p_top = axes[r0].get_position()
         p_bot = axes[r1].get_position()
@@ -550,7 +549,7 @@ def plot_locus(locus_key):
             x0 - label_x_offset, y0 + h / 2, sec_label,
             transform=fig.transFigure,
             rotation=90, va="center", ha="center",
-            fontsize=7, color="#444444",
+            fontsize=10, color="#444444",
         )
 
     # Gene model label at same x as section labels
@@ -558,7 +557,7 @@ def plot_locus(locus_key):
         p0.x0 - label_x_offset, p0.y0 + (p0.y1 - p0.y0) / 2, "Gene\nmodel",
         transform=fig.transFigure,
         rotation=0, va="center", ha="center",
-        fontsize=7, color="#444444",
+        fontsize=10, color="#444444",
     )
 
     out = os.path.join(OUT_DIR, f"panel_C_{locus_key}.pdf")
