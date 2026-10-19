@@ -141,3 +141,31 @@ Each NPZ shard contains:
 - `has_signal` — float flag, 1.0 if window overlaps any event
 
 Default: 524,288 bp windows binned at 32 bp (16,384 bins), 3 cell-type tasks.
+
+## Citation
+
+This is the upstream data-labeling pipeline for the model and analysis code at
+[immune_splice_borzoi](https://github.com/jsdearbo/immune_splice_borzoi). If you
+use this code, please cite:
+
+```
+Dearborn, J.S., Stagg, R., Limoge, D.W., Kirch, T., Miller, Z.D., Dowell, W.,
+Languon, S., Cockrell, R.C., and Majumdar, D. (2026). Learning and probing
+sequence representations of immune cell alternative splicing. Proceedings of
+Machine Learning in Computational Biology (MLCB), Proceedings of Machine
+Learning Research, PMLR. (To appear.)
+```
+
+BibTeX (update volume/pages/url once assigned by PMLR):
+
+```bibtex
+@inproceedings{dearborn2026learning,
+  title     = {Learning and probing sequence representations of immune cell alternative splicing},
+  author    = {Dearborn, Jacob S. and Stagg, Ryan and Limoge, Damas W. and Kirch, Tylar and Miller, Zachary D. and Dowell, William and Languon, Sylvester and Cockrell, Robert C. and Majumdar, Devdoot},
+  booktitle = {Proceedings of Machine Learning in Computational Biology (MLCB)},
+  series    = {Proceedings of Machine Learning Research},
+  publisher = {PMLR},
+  year      = {2026},
+  note      = {To appear}
+}
+```
