@@ -1,14 +1,26 @@
-# Ignore output directories
+# --- Data outputs (large, generated) ---
 results/
-results_*/
+data_labeling/results/
+data_labeling/outputs*/
 data_labeling/hard_output_test/
 data_labeling/soft_output_test/
 data_labeling/validation_tracks/
-data_labeling/outputs/
-data_labeling/outputs*/
-data_labeling/__pycache__/
 
+# --- Generated manifests (written at runtime) ---
+config/manifest.generated.tsv
 
-# Ignore nohup outputs
+# --- Process logs ---
 nohup.out
+*.log
 
+# --- Experiment tracking ---
+*wandb/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# --- Jupyter checkpoints ---
+.ipynb_checkpoints/

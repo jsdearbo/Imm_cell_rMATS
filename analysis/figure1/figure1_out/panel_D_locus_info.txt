@@ -1,0 +1,6 @@
+chrom=chr2
+window_start=21206327
+window_end=21730615
+B Cell: 284 masked bins, mean PSI=0.460, std=0.497
+Macrophage: 284 masked bins, mean PSI=0.460, std=0.497
+T Cell: 284 masked bins, mean PSI=0.460, std=0.497

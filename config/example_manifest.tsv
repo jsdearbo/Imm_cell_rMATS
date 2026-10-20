@@ -1,0 +1,6 @@
+cell_type	bed_path
+B_cell	/path/to/B_cell_rep1.bed
+B_cell	/path/to/B_cell_rep2.bed
+B_cell	/path/to/B_cell_rep3.bed
+T_cell	/path/to/T_cell_rep1.bed
+T_cell	/path/to/T_cell_rep2.bed
