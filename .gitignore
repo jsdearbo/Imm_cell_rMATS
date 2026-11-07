@@ -1,5 +1,8 @@
 # --- Data outputs (large, generated) ---
 results/
+# rMATS internal scratch (pickled intermediates, no reuse value)
+**/rmats/tmp/
+*.rmats
 data_labeling/results/
 data_labeling/outputs*/
 data_labeling/hard_output_test/
